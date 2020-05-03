@@ -1,0 +1,720 @@
+---
+title: "Explorando fatores que afetam a transmissão de COVID-19 na Bahia"
+author: "Grupo de Estudos em Ecologia Espacial - UFBA"
+date: "4/17/2020"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Apresentação
+
+Esse documento traz os resultados e códigos utilizados nas análises dos fatores que contribuem para a expansão dos casos de covid-19 no estado da Bahia. Esse estudo foi realizado pelo grupo de estudos em ecologia espacial da UFBA, incluindo diversos pesquisadores e laboratórios do Instituo de Biologia.
+
+# Pacotes
+
+Se for seguir o código para recriar as análises, antes de inciar, carregue e instale os seguintes pacotes.
+```{r pacotes, message=FALSE}
+library(coronabr) # pode baixar aqui: https://github.com/liibre/coronabr
+library(tidyverse)
+library(car)
+library(randomForest)
+library(rgdal) #load map
+library(sp) #plot maps
+```
+
+# Download dos dados de COVID-19 para a Bahia
+
+Com o código abaixo podemos baixar os dados para todos os municipios Bahia.
+Para saber mais sobre as fontes do dados acesse o seguinte link: https://github.com/liibre/coronabr. 
+
+```{r baixar os dados}
+covid <- as_tibble(get_corona_br(uf = "BA")) 
+```
+
+Pequenos ajustes na tabela:
+```{r ajustes}
+covid <- covid %>% 
+  filter(place_type == "city") %>% 
+  mutate(city = factor(city, levels = unique(city)))
+```
+
+Dados por municipio:
+```{r}
+mun_covid <- covid %>%  
+  filter(date == date[1]) %>% 
+  mutate(afetados = ifelse(confirmed > 0, 1, 0))
+```
+
+
+Estatísticas dos casos na Bahia:
+```{r estatisticas}
+mun_covid %>%  
+  summarise("Casos totais" = sum(confirmed), 
+            "Mortes totais" = sum(deaths),
+            "Número de municipios afetados" = sum(confirmed > 0))
+```
+
+
+# Causas que afetam a ocorrência de COVID-19
+
+A primeira pergunta que buscamos identificar os fatores que afetam a ocorrência de COVID-19 em um determinando município. Buscamos fazer isso de correlacionando diversos fatores sociais, econômicos e ambientais a duas variáveis respostas: uma binária, (1) separando municípios em infectados ou não infectados; e uma contínua, (2) identificando quanto tempo levou para o município ter X infecções por COVID-19. 
+
+## Dados dos municípios
+
+No primeiro passo, carregmos os dados socio-economicos obtidos do IBGE e os dados de transporte obtidos do mapbiomas.
+```{r ibge, message = FALSE, warning=FALSE}
+ibge <- read_csv2(file("Data/new_ibge.csv", encoding="UTF-8")) %>% 
+  separate(cidade, c("Cidade", "Estado"), sep = "\\(") %>% 
+  mutate(Estado = str_remove(Estado, "\\)")) %>% 
+   filter(Estado == "BA") %>% 
+  select(-X1, -X)
+
+federal <- read_csv2("Data/federal_w_codes.csv") %>% select(-X1)
+centralidade <- read_csv2("Data/new.dat.ba.csv") %>% select(-X1)
+clima <- read_csv2("Data/climatic.br.csv") %>% 
+  mutate(precTotal = rowSums(.[3:7]),
+         tmean = apply(.[8:17], 1, mean))%>% 
+  select(-X1)
+meso <- read_csv('Data/meso.csv')
+colnames(meso)[1] <- 'mesoregiao'
+aero <- read_csv2('Data/main.air.ba.csv')%>% select(-X1)
+```
+
+Depois de carregados, juntamos as tabelas com todas essas informações.
+```{r juntar}
+munis <- left_join(ibge, centralidade, by = c("cod_ibge" = "ibgecode")) %>% 
+  left_join(federal, by = c("cod_ibge" = "ibge")) %>% 
+  left_join(mun_covid, by = c("cod_ibge" = "city_ibge_code"))  %>% 
+  left_join(clima, by = c("cod_ibge" = "ibge")) %>% 
+  left_join(meso, by = c("cod_ibge" = "code")) %>% 
+  left_join(aero, by = c("cod_ibge" = "ibge")) %>% 
+
+  mutate(dens.road = ifelse(is.na(dens.road), 0, dens.road),
+         afetados = ifelse(is.na(afetados), 0, afetados),
+         airport = ifelse(is.na(airport), "NO", airport),
+         confirmed = ifelse(is.na(confirmed), 0, confirmed),
+         confirmed_per_100k_inhabitants = ifelse(is.na(confirmed_per_100k_inhabitants), 0, 
+                                                 confirmed_per_100k_inhabitants),
+         tam_pop_urb = total.pop * (1 - perc.rural))
+```
+
+Ao final obtemos a seguinte tabela:
+```{r}
+munis
+```
+
+
+
+## Infectados ou não infectados
+
+Modelo logístico correlacionando as variáveis com presença ou ausência do vírus. As variáveis foram escolhidas visando diminuir a correlação entre elas e manter a expectativa teorica.
+```{r modelo}
+reg_log <- glm(afetados ~ 
+                 airport + log(total.pop) + perc.rural +
+                 log(eingen.cen.dist) + school.year +
+                 perc.with.wages + dist.min +
+                 tmean + log(precTotal),
+               data = munis,
+               family = binomial)
+```
+
+Checar a inflação do modelo:
+```{r}
+# VIF
+vif(reg_log)
+```
+
+Resultado do modelo:
+```{r}
+resu <- summary(reg_log)
+```
+
+Adicionado por Anderson (20/04/20)
+```{r}
+cor(munis$perc.rural, munis$total.pop)
+cor(munis$tam_pop_urb, munis$total.pop)
+cor(munis$tam_pop_urb, munis$perc.rural)
+```
+
+
+Modelo logístico com novas variáveis:
+```{r modelo2}
+reg_log2 <- glm(afetados ~ 
+            airport + log(total.pop)+ perc.rural +
+              log(eingen.cen.dist) + school.year +
+              perc.with.wages + dist.min.ilh.ssa +
+              log(precTotal) + tmean,
+            data = munis,
+            family = binomial)
+```
+
+Checar a inflação do modelo:
+```{r}
+# VIF
+vif(reg_log2)
+```
+
+Resultado do modelo:
+```{r}
+resu2 <- summary(reg_log2)
+```
+
+Modelo logístico com novas variáveis:
+incluindo renda mensal (month.wages)
+e removendo variáveis para diminuir o VIF
+```{r modelo 3}
+reg_log3 <- glm(afetados ~ 
+            airport + dist.min.ilh.ssa +
+            log(eingen.cen.dist) + 
+            perc.with.wages  + month.wages +
+            log(precTotal) + tmean,
+            data = munis,
+            family = binomial)
+```
+
+
+Checar a inflação do modelo:
+```{r}
+# VIF
+vif(reg_log3)
+```
+
+```{r}
+resu3 <- summary(reg_log3)
+```
+
+
+Modelo logístico apenas com mesorregiões:
+```{r modelo 4}
+reg_log4 <- glm(afetados ~ 
+            mesoregiao,
+            data = munis,
+            family = binomial)
+```
+
+Na verdade, um qui-quadrado gourmet:
+```{r}
+resu4 <- summary(reg_log4)
+```
+
+Modelo logístico apenas com estrutura da rede de transporte:
+```{r modelo 5}
+sim.roles<-ifelse(munis$roles=="network hub", "hub", munis$roles)
+
+reg_log5 <- glm(afetados ~ 
+            log(eingen.cen.dist)+sim.roles+as.factor(module),
+            data = munis,
+            family = binomial)
+```
+
+Na verdade, um qui-quadrado gourmet:
+```{r}
+resu5 <- summary(reg_log5)
+```
+
+
+Comparando os modelos com AIC
+```{r}
+aic.log <- AIC(reg_log,reg_log2,reg_log3, reg_log4, reg_log5)
+aic.log
+```
+
+Recalcular os valores de p por monte carlo, aleatorizando a variavel "afetados". O modelo escolhido foi o reg_log2 com base no valor de AIC.
+```{r sim}
+rept <- 1000
+obs_z <- summary(reg_log2)$coefficients[, 3]
+obs <- coefficients(reg_log2)
+zs <- coefs <- matrix(ncol = length(obs), nrow = rept)
+colnames(zs) <- colnames(coefs) <- names(obs)
+for (i in 1:rept) {
+  munis$rnd_afetados <- sample(munis$afetados)
+  reg_log <- glm(afetados ~ 
+            airport + log(total.pop)+ perc.rural +
+              log(eingen.cen.dist) + school.year +
+              perc.with.wages + dist.min.ilh.ssa +
+              log(precTotal) + tmean,
+            data = munis,
+            family = binomial)
+  zs[i, ] <- summary(reg_log)$coefficients[, 3]
+  coefs[i, ] <- coefficients(reg_log)
+}
+
+for (j in 1:length(obs)) {
+  maior <- (sum(obs[j] >= coefs[, j]) + 1 ) / (rept + 1) * 2
+  menor <- (sum(obs[j] <= coefs[, j]) + 1) / (rept + 1) * 2
+  resu$coefficients[j, 4] <- ifelse(maior > menor, menor, maior)
+}
+resu
+```
+
+As simulações de monte carlo confirmam os resultados anteriores.
+
+CONCLUSÃO: O modelo indica que municípios com uma população grande e urbana, têm maior probabilidade de serem afetados. Bem como municipios com mais chuva durante os últimos 4 meses. 
+
+```{r}
+munis %>% mutate(afetados = ifelse(afetados == 1, "Sim", "Não")) %>% 
+ggplot(aes(x = afetados ,
+           y = total.pop)) +
+  geom_violin() +
+  geom_jitter(alpha = .5) +
+  scale_y_log10() +
+  xlab("Município afetado") +
+  ylab("Tamanho população")
+```
+
+
+```{r}
+munis %>% mutate(afetados = ifelse(afetados == 1, "Sim", "Não")) %>% 
+ggplot(aes(x = afetados ,
+           y = perc.rural)) +
+  geom_violin() +
+  geom_jitter(alpha = .5) +
+  xlab("Município afetado") +
+  ylab("Porcentagem população rural")
+```
+
+
+```{r}
+munis %>% mutate(afetados = ifelse(afetados == 1, "Sim", "Não")) %>% 
+ggplot(aes(x = afetados,
+           y = precTotal)) +
+  geom_violin() +
+  geom_jitter(alpha = .5) +
+  scale_y_log10() +
+  xlab("Município afetado") +
+  ylab("Precipitação")
+```
+
+# Correlacao com numero de casos
+Principais fatores contribuindo para a quantidade de casos, nas cidades afetadas.
+```{r cor N}
+reg_N <- lm(log(confirmed_per_100k_inhabitants+1) ~ 
+            airport + log(total.pop) + perc.rural +
+            log(eingen.cen.dist) + school.year +
+            perc.with.wages + dist.min +
+              precTotal + tmean,
+            data = filter(munis, confirmed > 0))
+```
+
+```{r}
+vif(reg_N)
+```
+
+O resultado preliminar aponta para um efeito negativo da população sobre o número de casos a cada 100 mil habitantes, porém pode ser apenas um efeito matemático. Para avaliar isso, recalculamos abaixo os valore de p usando uma simulação da Monte Carlo, onde o numero de casos foi aleatorizado e foi recalculada o número de casos por 100k habitantes.
+```{r}
+rept <- 1000
+obs <- coef(reg_N)
+coefs <- matrix(ncol = length(obs), nrow = rept)
+colnames(coefs) <- names(obs)
+for (i in 1:rept) {
+ munis$rnd_cases <- (sample(munis$confirmed) / munis$total.pop) * 1000
+  while(sum(munis$airport[munis$rnd_cases > 0] == "YES") < 2) {
+    munis$rnd_cases <- (sample(munis$confirmed) / munis$total.pop) * 1000
+  }
+  reg_N <- lm(log(rnd_cases+1) ~ 
+              airport + log(total.pop) + perc.rural +
+              log(eingen.cen.dist) + school.year +
+              perc.with.wages + dist.min +
+              precTotal + tmean,
+              data = filter(munis, rnd_cases > 0))
+  coefs[i, ] <- coef(reg_N)
+}
+
+for (j in 1:length(obs)) {
+  maior <- (sum(obs[j] >= coefs[, j]) + 1 ) / (rept + 1) * 2
+  menor <- (sum(obs[j] <= coefs[, j]) + 1) / (rept + 1) * 2
+  resu$coefficients[j, 4] <- ifelse(maior > menor, menor, maior)
+}
+resu
+```
+
+Mesmo calculando o p-valor  usando simulação, o efeito da população se mantém. Como pode ser visto abaixo (em cinza, coeficientes simulados, em vermelho o valor observado para o tamanho da população). 
+```{r}
+ggplot(tibble(coefs = coefs[, 3]), aes(x = coefs)) +
+  geom_histogram(bins = 30) +
+  geom_vline(aes(xintercept = obs[3]), color = "red") +
+  ggtitle("Efeito do tamanho da população") +
+  ylab("Frequência") +
+  xlab("Coeficientes")
+```
+
+
+```{r}
+munis %>% filter(confirmed > 0) %>% 
+ggplot(aes(y = log(confirmed_per_100k_inhabitants+1),
+                  x = log(total.pop))) +
+  geom_point()
+```
+
+# Correlacao com numero de casos (Novas variáveis)
+Principais fatores contribuindo para a quantidade de casos, nas cidades afetadas.
+```{r cor N2}
+reg_N2 <- lm(log(confirmed_per_100k_inhabitants + 1) ~ 
+            airport + perc.rural +
+              log(eingen.cen.dist) + school.year +
+              perc.with.wages + dist.min +
+              precTotal + tmean + log(tam_pop_urb) +
+              mesoregiao + dist.min.ilh.ssa,
+            data = filter(munis, confirmed > 0))
+```
+
+```{r}
+vif(reg_N2)
+```
+
+```{r}
+resu2 <- summary(reg_N2)
+resu2 
+```
+
+Reajustando o modelo 2 para diminuir o vif ou variáveis redundantes (removendo popurbana, distmin,meso e escolaridade)
+```{r cor N3}
+reg_N3 <- lm(log(confirmed_per_100k_inhabitants + 1) ~ 
+            airport + perc.rural +
+              log(eingen.cen.dist) +
+              perc.with.wages  +
+              precTotal + tmean +
+               dist.min.ilh.ssa,
+            data = filter(munis, confirmed > 0))
+```
+
+```{r}
+vif(reg_N3)
+```
+
+```{r}
+resu3 <- summary(reg_N3)
+resu3 
+```
+
+Modelo somente mesorregiões
+```{r cor N4}
+reg_N4 <- lm(log(confirmed_per_100k_inhabitants + 1) ~ 
+            mesoregiao,
+            data = filter(munis, confirmed > 0))
+```
+
+Resultado
+```{r}
+resu4 <- summary(reg_N4)
+resu4 
+```
+
+Modelo somente estrutura da rede de transporte
+```{r cor N5}
+reg_N5 <- lm(log(confirmed_per_100k_inhabitants + 1) ~ 
+            as.factor(module)+log(eingen.cen.dist)+roles,
+            data = filter(munis, confirmed > 0))
+```
+
+```{r}
+vif(reg_N5)
+```
+
+Resultado
+```{r}
+resu5 <- summary(reg_N5)
+resu5 
+```
+
+
+Modelo incluindo renda mensal (month.wages)
+```{r cor N6}
+reg_N6 <- lm(log(confirmed_per_100k_inhabitants + 1) ~ 
+            airport + dist.min.ilh.ssa +
+            log(eingen.cen.dist) + 
+            perc.with.wages  + month.wages +
+            log(precTotal) + tmean,
+            data = munis)
+```
+
+Checar a inflação do modelo:
+```{r}
+# VIF
+vif(reg_N6)
+```
+
+```{r}
+resu6 <- summary(reg_N6)
+resu6
+```
+
+AIC
+```{r}
+AIC(reg_N,reg_N3,reg_N4, reg_N5, reg_N6)
+```
+
+# Correlacao com o tempo até o primeiro caso
+```{r}
+covid.day <- get_corona_br(
+  dir = "output",
+  filename = "corona_brasil",
+  cidade = NULL,
+  uf = 'BA',
+  ibge_cod = NULL,
+  by_uf = FALSE
+)
+covid.day <- data.frame(covid.day, 
+                        afetados = ifelse(covid.day$confirmed > 0, 1, 0))
+```
+
+
+```{r}
+covid.day <- left_join(ibge, centralidade, by = c("cod_ibge" = "ibgecode")) %>% 
+  left_join(federal, by = c("cod_ibge" = "ibge")) %>% 
+  left_join(covid.day, by = c("cod_ibge" = "city_ibge_code"))  %>% 
+  left_join(clima, by = c("cod_ibge" = "ibge")) %>% 
+  left_join(meso, by = c("cod_ibge" = "code")) %>% 
+  
+  mutate(dens.road = ifelse(is.na(dens.road), 0, dens.road),
+         afetados = ifelse(is.na(afetados), 0, afetados),
+         airport = ifelse(is.na(airport), "NO", airport),
+         confirmed = ifelse(is.na(confirmed), 0, confirmed),
+         confirmed_per_100k_inhabitants = ifelse(is.na(confirmed_per_100k_inhabitants),
+                                                 0,
+                                                 confirmed_per_100k_inhabitants))
+cod <- unique(covid.day$cod_ibge)
+tempo <- data.frame(matrix(ncol = 2, nrow = length(cod)))
+colnames(tempo) <- c('cod_ibge', 'tempo_1')
+tempo[, 1] <- cod
+
+for(i in 1:length(cod)){
+  tab.cod <- data.frame(covid.day[covid.day$cod_ibge == cod[i], ])
+  tab.cod <- tab.cod[order(tab.cod$date), ]
+  if(sum(tab.cod$confirmed > 0) > 0){ # Mudar de acordo com a qtd de casos
+  primeiro <- tab.cod[min(which(tab.cod$confirmed > 0)), 'date']  
+  baseline <- as.Date.character('2020-03-06')
+  tempo [i, 2] <- as.numeric(difftime(primeiro, baseline, 'days'))
+  }
+  if(sum(tab.cod$confirmed > 0) == 0){
+    tempo [i, 2] <- NA 
+  }
+}
+
+munis <- merge(munis, tempo, by = 'cod_ibge',
+               all.x = T, all.y = F, sort = F)
+```
+
+Principais fatores contribuindo para a quantidade de casos
+Removi distmin porque é redundante com dis.min.ilh.ssa
+Removi meso por causa do vif alto
+```{r cor T}
+reg_T <- lm(tempo_1 ~ 
+              airport +
+              log(eingen.cen.dist) + school.year +
+              perc.with.wages  +
+              precTotal + tmean +
+              dist.min.ilh.ssa,
+            data = filter(munis, confirmed > 0))
+```
+
+```{r}
+vif(reg_T)
+```
+
+
+```{r}
+resu <- summary(reg_T)
+resu 
+```
+
+
+# Prever municipios com maior probabilidade de serem afetados
+
+Para isso usamos um random forest.
+```{r}
+# data_mod2 <- data_mod %>% na.omit() %>% 
+#   mutate(total.pop = log(total.pop),
+#          eingen.cen.dist = log(eingen.cen.dist),
+#          afetados = as.factor(afetados),
+#          airport = as.factor(airport)) 
+# 
+# reg_log <- randomForest(afetados ~ 
+#                  airport + total.pop + perc.rural +
+#                  eingen.cen.dist + school.year +
+#                  perc.with.wages + dist.min,
+#                data = data_mod2, 
+#                importance = TRUE)
+```
+
+Fazer um mapa de vulnerabilidade aqui.
+
+
+# Taxa de crescimento dos casos de covid-19
+
+Calcular a taxa
+```{r}
+# USAR MESMA ESTRATEGIA DO OUTRO ARTIGO
+```
+
+Gráfico de todos os municipios
+```{r crescimento}
+cols <- ifelse(levels(covid$city) == "Salvador", "black", "gray")
+covid %>%
+  ggplot(aes(x = date, y = confirmed, color = city)) +
+  scale_color_manual(values = cols) +
+  geom_line() +
+  ggtitle("Casos de COVID-19 por cidade da Bahia") +
+  ylab("Casos confirmados") +
+  xlab("Data") +
+  theme_classic() +
+  theme(legend.position = "none") +
+  geom_text(aes(x = date[1] - 8, y = 300, 
+                label = "Salvador"), color = "black")
+```
+
+# Como a taxa tem variado ao longo do tempo?
+
+```{r}
+covid <- as_tibble(get_corona_br(uf = "BA")) 
+```
+
+Pequenos ajustes na tabela:
+```{r}
+covid.ba <- covid %>% 
+  filter(place_type == "state") 
+
+covid.ci <- covid %>% 
+  filter(place_type == "city") 
+```
+
+
+Segunda abordagem para crescimento exponencial
+```{r}
+gm_mean <- function(x, na.rm = TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+r_calc <- function(x) {
+  gm_mean(x[2:length(x)] / x[1:(length(x)-1)])
+}
+```
+
+Taxa de crescimento Bahia
+```{r}
+casos.ba <- covid.ba$confirmed[nrow(covid.ba):1] #backwards
+tempo.ba <- 1:length(casos.ba)
+head(covid.ba)
+exp.ba<- lm(log(casos.ba)~tempo.ba)
+tax.ba<-coef(exp.ba)[2]
+
+r.time.b<- data.frame(tempo=tempo.ba,
+           confirmados=casos.ba,
+           data=covid.ba$date[nrow(covid.ba):1],
+           taxa=NA,
+           r.squ=NA,
+           taxa2=NA) #segunda abordagem
+
+for (i in 5:length(casos.ba))
+{
+  exp.temp<-lm(log(casos.ba[1:i])~tempo.ba[1:i])
+  r.time.b[i,4]<-coef(exp.temp)[2]
+  r.time.b[i,5]<-summary(exp.temp)$r.squared
+  r.time.b[i,6]<-r_calc(casos.ba[1:i])
+}
+
+
+```  
+
+Correlação entre as duas abordagens
+```{r}
+```
+
+Taxa de crescimento Bahia
+```{r}
+
+plot(r.time.b$data, r.time.b$taxa,
+     bty="l", pch=19, ylim=c(0,0.3),
+     xlab="Data", ylab="Taxa Bahia")
+
+```
+
+
+Taxa de crescimento Municípios
+```{r}
+city.codes<-na.omit(unique(covid.ci$city_ibge_code))
+city.n<-length(city.codes)
+w=1
+list.ci<-list()
+for (w in 1:city.n)
+{
+  covid.temp <- covid.ci %>% 
+  filter(city_ibge_code == city.codes[w])
+  n.temp<-nrow(covid.temp)
+  casos.temp<-covid.temp$confirmed[n.temp:1]
+  tempo.temp<-1:n.temp
+  
+  list.ci[[w]]<-data.frame(tempo=tempo.temp, #tempo
+                      casos=casos.temp) #casos
+                      
+}
+names(list.ci)<-city.codes
+n.obs.ci<-sapply(list.ci, nrow) #tamanho das séries temporais
+
+#filtrando cidades com no mínimo dez dias com corona
+new.list.ci<-list.ci[n.obs.ci>9]
+
+#Ajustado modelo exponencial para cada munícipio
+exp.ci<-log(tempo)~casos #equação
+mod.exp.ci<-lapply(new.list.ci, lm, formula=exp.ci) #modelo exponencial
+coe.exp.ci<-lapply(mod.exp.ci, coef) #coeficientes
+r.ci<-sapply(coe.exp.ci, "[", 2) #só a inclinação ("taxa r")
+sum.exp.ci<-lapply(mod.exp.ci, summary) #sumário dos modelos
+r.squ.ci<-sapply(sum.exp.ci, "[", "r.squared")
+r.squ.ci<-unlist(r.squ.ci)
+
+#ajustando na segunda abordagem
+r.ci2<-numeric()
+for (i in 1:length(new.list.ci))
+{
+  r.ci2[i]<-r_calc(new.list.ci[[i]][,2])
+}
+
+
+# Montando a planilha
+
+r.mun.dat<-data.frame(city_ibge_code=names(new.list.ci),
+           taxa=r.ci,
+           r.square=r.squ.ci,
+           taxa2=r.ci2)
+only80<-r.mun.dat %>% 
+  filter(r.square>0.8)
+cor.test(only80[,2], only80[,4])
+```
+
+# Que fatores afetam a taxa de crescimento?
+
+# Quando ocorreram os picos?
+
+# Qual a meta de quarentena para evitar colapso do sistema?
+
+# Mapas
+```{r}
+ba.shp<-readOGR("Data/bahia.shp")
+x.ibge<-match(ba.shp$CD_GEOCMU, munis$cod_ibge)
+x.ibge2<-match(ba.shp$CD_GEOCMU, filter(munis, confirmed > 0)$cod_ibge)
+ba.shp$mesoregiao<-munis$mesoregiao[x.ibge]
+ba.shp$module<-munis$module[x.ibge]
+ba.shp$total.pop<-log(munis$total.pop)[x.ibge]
+ba.shp$perc.rural<-munis$perc.rural[x.ibge]*100
+ba.shp$dist.min.ilh.ssa<-munis$dist.min.ilh.ssa[x.ibge]
+ba.shp$precTotal<-log(munis$precTotal)[x.ibge]
+ba.shp$afetados<-munis$afetados[x.ibge]
+ba.shp$res_casos<-resid(reg_N3)[x.ibge2]
+ba.shp$pred_afetados<-predict(reg_log2, type="response")[x.ibge]
+
+sp::spplot(ba.shp, "mesoregiao", main="Messoregiões")
+sp::spplot(ba.shp, "module", main="Módulos")
+sp::spplot(ba.shp, "total.pop", main="Log Tamanho da População")
+sp::spplot(ba.shp, "perc.rural", main="% População Rural")
+sp::spplot(ba.shp, "dist.min.ilh.ssa", main="Distância de Aeroportos")
+sp::spplot(ba.shp, "afetados", main="Municípios Afetados")
+sp::spplot(ba.shp, "res_casos", main="Resíduos Casos")
+sp::spplot(ba.shp, "pred_afetados", main="Probabilidade Afetados")
+```

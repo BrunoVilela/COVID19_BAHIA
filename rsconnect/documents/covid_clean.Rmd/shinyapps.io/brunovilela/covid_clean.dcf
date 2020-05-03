@@ -1,0 +1,12 @@
+name: covid_clean
+title: covid_clean
+username:
+account: brunovilela
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 2217953
+bundleId: 3098099
+url: https://brunovilela.shinyapps.io/covid_clean/
+when: 1588538372.72518
+asMultiple: FALSE
+asStatic: FALSE
