@@ -14,7 +14,7 @@ editor_options:
 ---
 
 # Autores
-Esse estudo foi realizado pelo grupo de estudos em ecologia espacial da UFBA, incluindo os seguintes pesquisadores: 
+Essa pesquisa foi realizado pelo grupo de estudos em ecologia espacial da UFBA, incluindo os seguintes pesquisadores: 
 
 - Dr. Anderson Medina (Pós-doc IBIO-UFBA) 
 - Dr. Bruno Vilela (Professor IBIO-UFBA)
@@ -43,9 +43,9 @@ Especificamente buscamos responder as seguintes perguntas nesse documento:
 
 1) Apesar do número de casos terem subido, a taxa de crescimento do vírus na Bahia e em Salvador vem diminuindo, mas está aparentemente estabilizada no momento.
 
-2) A presença de COVID-19 em um município parece ser influenciado pela presença de uma população grande e urbana. Municípios que estão próximos aos grandes aeroportos do estado em Salvador e Ilheus, também tem maior vulnerabilidade. Também é interessante notar que uma maior preciptação parece estar ligada a presença do vírus.
+2) A presença de COVID-19 em um município parece ser influenciado pela presença de uma população grande e urbana. Municípios que estão próximos aos grandes aeroportos do estado, localizados em Salvador e Ilheus, também têm maior vulnerabilidade. É interessante notar que uma maior preciptação parece estar ligada a presença do vírus.
 
-3) Em cidades que já tem a COVID-19, o número de casos por 100 mil habitantes parece aumentar principalmente com a proximidade com grandes aeroportos. O número de profissionais de saude também está positivamente correlacionado com o número de casos por 100k habitantes, indicando um potencial vies causado pela busca e disponibilidade de assitência medica. Os fatores ambientais também parecem ter um efeito sobre essa variável, indicando que o número de casos aumenta com maior precipitação e menor temperatura. Interessante é que a centralidade rodoviária parece ter um efeito negativo sobre o taxa de casos por 100 mil habitantes. 
+3) Em cidades que já tem a COVID-19, o número de casos por 100 mil habitantes parece aumentar principalmente com a proximidade com grandes aeroportos, e diminui em cidades com populações mais rurais e com maior proporção de profissionais com carteira assinada. O número de profissionais de saúde parece estar positivamente correlacionado com o número de casos por 100 mil habitantes, indicando um potencial vies causado pela busca e disponibilidade de assitência médica. Os fatores ambientais também parecem ter um efeito sobre essa variável, indicando que o número de casos aumenta com maior precipitação e menor temperatura. É importante ressaltar que a centralidade na rede rodoviária parece ter um efeito negativo sobre o taxa de casos por 100 mil habitantes, o que seria contraintuito. Esse resultado pode indicar que algumas medidas tomadas nas principais cidades do estado (com maior conexão) podem estar correlacionada com a influência negativa encontrada para esse fator.
 
 4) O número de dias até o primeiro e até o décimo caso é principalmente afetado pelo tamanho da população. A proporção de população rural parece diminuir o número de dias até a primeira contaminação também.
 
@@ -70,6 +70,9 @@ library(shiny)
 library(leaflet)
 library(RColorBrewer)
 ```
+
+O código também está disponível em .Rmd no seguinte link: https://github.com/BrunoVilela/COVID19_BAHIA/blob/master/covid_clean.Rmd
+
 
 # Download dos dados de COVID-19 para a Bahia
 
@@ -358,6 +361,7 @@ A primeira pergunta que buscamos identificar os fatores que afetam a ocorrência
 ## Dados dos municípios
 
 No primeiro passo, carregamos os dados socio-economicos obtidos do IBGE, os dados de transporte obtidos do mapbiomas e dados do SUS.
+Todos podem ser obtidos aqui: https://github.com/BrunoVilela/COVID19_BAHIA/tree/master/Data
 ```{r ibge, message = FALSE, warning=FALSE}
 ibge <- read_csv2(file("Data/new_ibge.csv", encoding = "UTF-8")) %>%
   separate(cidade, c("Cidade", "Estado"), sep = "\\(") %>%
@@ -471,54 +475,30 @@ resu
 ### Gráficos
 
 ```{r}
-g <- munis %>% mutate(afetados = ifelse(afetados == 1, "Sim", "Não")) %>% 
-ggplot(aes(x = afetados ,
-           y = total.pop)) +
-  geom_violin() +
-  geom_jitter(alpha = .5) +
-  scale_y_log10() +
+g <- munis %>% 
+  mutate(afetados = ifelse(afetados == 1, "Sim", "Não"),
+         `log(total.pop)` = log(total.pop), 
+         `log(eingen.cen.dist)` = log(eingen.cen.dist), 
+         `log(precTotal)` = log(precTotal)) %>%
+  select(afetados, `log(total.pop)`, perc.rural,
+              `log(eingen.cen.dist)`, school.year,
+              perc.with.wages, dist.min.ilh.ssa, profissionais.saude,
+              `log(precTotal)`, tmean) %>% 
+  gather("Variavel", "Valor", -afetados) %>% 
+ # plot
+  ggplot(aes(x = afetados ,
+           y = Valor, 
+           fill = afetados)) +
+  geom_violin(width = 1) +
+  geom_boxplot(width=0.1, color="black", alpha = .2) +
+  theme(legend.position = "none") + 
   xlab("Município afetado") +
-  ylab("Tamanho população")
-ggplotly(g)
+  ylab("") +
+  facet_wrap(Variavel~., scales = "free_y")
+
+g
 ```
 
-
-```{r}
-g <- munis %>% mutate(afetados = ifelse(afetados == 1, "Sim", "Não")) %>% 
-ggplot(aes(x = afetados ,
-           y = perc.rural)) +
-  geom_violin() +
-  geom_jitter(alpha = .5) +
-  xlab("Município afetado") +
-  ylab("Porcentagem população rural")
-ggplotly(g)
-```
-
-
-```{r}
-g <- munis %>% mutate(afetados = ifelse(afetados == 1, "Sim", "Não")) %>% 
-ggplot(aes(x = afetados,
-           y = precTotal)) +
-  geom_violin() +
-  geom_jitter(alpha = .5) +
-  scale_y_log10() +
-  xlab("Município afetado") +
-  ylab("Precipitação")
-ggplotly(g)
-```
-
-
-```{r}
-g <- munis %>% mutate(afetados = ifelse(afetados == 1, "Sim", "Não")) %>% 
-ggplot(aes(x = afetados,
-           y = dist.min.ilh.ssa)) +
-  geom_violin() +
-  geom_jitter(alpha = .5) +
-  scale_y_log10() +
-  xlab("Município afetado") +
-  ylab("Menor distância para um grande aeroporto")
-ggplotly(g)
-```
 
 ### Conclusão
 A presença de COVID-19 em um município parece ser influenciado pela presença de uma população grande e urbana. Municípios que estão próximos aos grandes aeroportos do estado em Salvador e Ilheus, também tem maior vulnerabilidade. Também é interessante notar que uma maior preciptação parece estar ligada a presença do vírus.
@@ -578,74 +558,30 @@ resu
 
 ### Gráficos
 
-
-```{r, fig.width=10}
-g <- munis %>% filter(confirmed > 0) %>% 
-ggplot(aes(y = confirmed_per_100k_inhabitants,
-                  x = eingen.cen.dist,
-           col = rod_fechada)) +
-    labs(colour = "Dias com a rodoviária fechada") +
-    scale_y_log10() +
-    scale_x_log10() +
-  geom_point() +
-  ylab("Número de casos por 100 mil habitantes") +
-  xlab("Conectividade por transporte rodoviário")
-ggplotly(g)
-```
-
-
 ```{r}
 g <- munis %>% filter(confirmed > 0) %>% 
-ggplot(aes(y = confirmed_per_100k_inhabitants,
-                  x = dist.min.ilh.ssa)) +
-    scale_y_log10() +
+  mutate(`log(total.pop)` = log(total.pop), 
+         `log(eingen.cen.dist)` = log(eingen.cen.dist), 
+         `log(precTotal)` = log(precTotal)) %>%
+  select(confirmed_per_100k_inhabitants, `log(total.pop)`, perc.rural,
+              `log(eingen.cen.dist)`, school.year,
+              perc.with.wages, dist.min.ilh.ssa, profissionais.saude,
+              `log(precTotal)`, tmean) %>% 
+  gather("Variavel", "Valor", -confirmed_per_100k_inhabitants) %>% 
+ # plot
+  ggplot(aes(y = confirmed_per_100k_inhabitants,
+           x = Valor)) +
+     scale_y_log10() +
   geom_point() +
   ylab("Número de casos por 100 mil habitantes") +
-  xlab("Menor distância para um grande aeroporto")
+  xlab("") +
+  facet_wrap(Variavel ~ ., scales = "free_x")
+
 ggplotly(g)
 ```
-
-
-```{r}
-g <- munis %>% filter(confirmed > 0) %>% 
-ggplot(aes(y = confirmed_per_100k_inhabitants,
-                  x = precTotal)) +
-    scale_y_log10() +
-    scale_x_log10() +
-  geom_point() +
-  ylab("Número de casos por 100 mil habitantes") +
-  xlab("Precipitação")
-ggplotly(g)
-```
-
-
-
-```{r, warning=FALSE, message=FALSE}
-g <- munis %>% filter(confirmed > 0) %>% 
-ggplot(aes(y = confirmed_per_100k_inhabitants,
-                  x = tmean)) +
-    scale_y_log10() +
-  geom_point() +
-  ylab("Número de casos por 100 mil habitantes") +
-  xlab("Temperatura")
-ggplotly(g)
-```
-
-
-```{r, warning=FALSE, message=FALSE}
-g <- munis %>% filter(confirmed > 0) %>% 
-ggplot(aes(y = confirmed_per_100k_inhabitants,
-                  x = profissionais.saude)) +
-    scale_y_log10() +
-  geom_point() +
-  ylab("Número de casos por 100 mil habitantes") +
-  xlab("Número de profissionais de saude")
-ggplotly(g)
-```
-
 
 ### Conclusão
-Em cidades que já tem a COVID-19, o número de casos por 100 mil habitantes parece aumentar principalmente com a proximidade com grandes aeroportos. O número de profissionais de saude também está positivamente correlacionado com o número de casos por 100k habitantes, indicando um potencial vies causado pela busca e disponibilidade de assitência medica. Os fatores ambientais também parecem ter um efeito sobre essa variável, indicando que o número de casos aumenta com maior precipitação e menor temperatura. Interessante é que a centralidade rodoviária parece ter um efeito negativo sobre o taxa de casos por 100 mil habitantes. 
+3) Em cidades que já tem a COVID-19, o número de casos por 100 mil habitantes parece aumentar principalmente com a proximidade com grandes aeroportos, e diminui em cidades com populações mais rurais e com maior proporção de profissionais com carteira assinada. O número de profissionais de saúde parece estar positivamente correlacionado com o número de casos por 100 mil habitantes, indicando um potencial vies causado pela busca e disponibilidade de assitência médica. Os fatores ambientais também parecem ter um efeito sobre essa variável, indicando que o número de casos aumenta com maior precipitação e menor temperatura. É importante ressaltar que a centralidade na rede rodoviária parece ter um efeito negativo sobre o taxa de casos por 100 mil habitantes, o que seria contraintuito. Esse resultado pode indicar que algumas medidas tomadas nas principais cidades do estado (com maior conexão) podem estar correlacionada com a influência negativa encontrada para esse fator.
 
 ## Dias até N casos
 Na terceira linha de investigação, verificamos quais fatores afetam o númeri de dias até chegar ao caso, 1, 2, 3... N. Para tanto, usamos um modelo de linear com os mesmos fatores incluidos nos testes anteriores. 
@@ -721,26 +657,28 @@ resu
 ```
 
 #### Gráficos
-```{r, warning=FALSE, message=FALSE}
+```{r}
 g <- munis %>% filter(confirmed > 0) %>% 
-ggplot(aes(y = dia1,
-            x = total.pop)) +
-    scale_x_log10() +
+  mutate(`log(total.pop)` = log(total.pop), 
+         `log(eingen.cen.dist)` = log(eingen.cen.dist), 
+         `log(precTotal)` = log(precTotal)) %>%
+  select(dia1, `log(total.pop)`, perc.rural,
+              `log(eingen.cen.dist)`, school.year,
+              perc.with.wages, dist.min.ilh.ssa, profissionais.saude,
+              `log(precTotal)`, tmean) %>% 
+  gather("Variavel", "Valor", -dia1) %>% 
+ # plot
+  ggplot(aes(y = dia1,
+           x = Valor)) +
+     scale_y_log10() +
   geom_point() +
-  ylab("Número de casos por 100 mil habitantes") +
-  xlab("Tamanho da população")
+  ylab("Dias até o primeiro caso") +
+  xlab("") +
+  facet_wrap(Variavel ~ ., scales = "free_x")
+
 ggplotly(g)
 ```
 
-```{r, warning=FALSE, message=FALSE}
-g <- munis %>% filter(confirmed > 0) %>% 
-ggplot(aes(y = dia1,
-            x = perc.rural)) +
-  geom_point() +
-  ylab("Número de casos por 100 mil habitantes") +
-  xlab("Porcentagem da população em área rural")
-ggplotly(g)
-```
 
 ### Dias até o décimo caso
 Antes de começar calculamos o número de dias até o décimo caso por cidade.
@@ -811,24 +749,26 @@ resu
 ```
 
 #### Gráficos
-```{r, warning=FALSE, message=FALSE}
-g <- munis_mod %>% 
-ggplot(aes(y = dia10,
-            x = total.pop)) +
-    scale_x_log10() +
-  geom_point() +
-  ylab("Número de casos por 100 mil habitantes") +
-  xlab("Tamanho da população")
-ggplotly(g)
-```
 
-```{r, warning=FALSE, message=FALSE}
-g <- munis_mod %>% 
-ggplot(aes(y = dia10,
-            x = perc.rural)) +
+```{r}
+g <- munis %>% filter(confirmed > 0) %>% 
+  mutate(`log(total.pop)` = log(total.pop), 
+         `log(eingen.cen.dist)` = log(eingen.cen.dist), 
+         `log(precTotal)` = log(precTotal)) %>%
+  select(dia10, `log(total.pop)`, perc.rural,
+              `log(eingen.cen.dist)`, school.year,
+              perc.with.wages, dist.min.ilh.ssa, profissionais.saude,
+              `log(precTotal)`, tmean) %>% 
+  gather("Variavel", "Valor", -dia10) %>% 
+ # plot
+  ggplot(aes(y = dia10,
+           x = Valor)) +
+     scale_y_log10() +
   geom_point() +
-  ylab("Número de casos por 100 mil habitantes") +
-  xlab("Porcentagem da população em área rural")
+  ylab("Dias até o primeiro caso") +
+  xlab("") +
+  facet_wrap(Variavel ~ ., scales = "free_x")
+
 ggplotly(g)
 ```
 
