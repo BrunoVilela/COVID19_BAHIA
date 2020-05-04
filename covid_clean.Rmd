@@ -25,7 +25,7 @@ Essa pesquisa foi realizado pelo grupo de estudos em ecologia espacial da UFBA, 
 
 # Apresentação
 
-Esse documento traz os resultados e códigos utilizados nas análises dos fatores que contribuem para a expansão dos casos de covid-19 no estado da Bahia. 
+Esse documento traz os resultados e códigos utilizados nas análises dos fatores que contribuem para a expansão dos casos de covid-19 no estado da Bahia.
 
 Especificamente buscamos responder as seguintes perguntas nesse documento:
 
@@ -241,17 +241,28 @@ output$phonePlot3 = renderLeaflet({
 
 # Taxa ao longo do tempo
 
-Número de casos no tempo.
+Número de casos, casos por 100 mil habitantes, mortes e taxa de mortalidade no tempo para o estado da Bahia.
 ```{r}
 covid_ba <- covid0 %>%
-  filter(place_type == "state") 
+  filter(place_type == "state")
+covid_ba2 <- covid_ba %>% 
+        select(confirmed,
+               date,
+               confirmed_per_100k_inhabitants,
+               deaths,
+               death_rate) %>%
+        gather("key", "value",-date) %>%
+        mutate(key = factor(key, levels = unique(key), 
+                            labels = infos))
 
-g <- ggplot(covid_ba, aes(y = confirmed, x = date)) +
+g <- ggplot(covid_ba2, aes(y = value, x = date)) +
   geom_point() +
   geom_line() +
-  ylab("Casos confirmados") +
+  ylab("") +
   xlab("Data") +
-  ggtitle("Bahia")
+  ggtitle("Bahia") +
+  facet_wrap(key ~ ., scales = "free_y")
+
 ggplotly(g)
 ```
 
@@ -271,7 +282,7 @@ g <- ggplot(taxa, aes(y = rs, x = data)) +
 ggplotly(g)
 ```
 
-Verifique o crescimento para cada município:
+Verifique o número de casos, casos por 100 mil habitantes, mortes e taxa de mortalidade no tempo para cada município:
 ```{r, echo = TRUE}
  selectInput("region", "Cidade:",
                 choices = unique(mun_covid$city),
@@ -281,17 +292,26 @@ Verifique o crescimento para cada município:
 
 ```{r , context="server"}
    output$phonePlot = renderPlot({
+      a <- input$region
       
-      covid_ba <- covid0 %>%
-  filter(city == input$region) 
-
-  g <- ggplot(covid_ba, aes(y = confirmed, x = date)) +
-  geom_point() +
-  geom_line() +
-  ylab("Casos confirmados") +
-  xlab("Data") +
-  ggtitle(input$region)
-  g
+      covid0 %>%
+        filter(city == a) %>%
+        select(confirmed,
+               date,
+               confirmed_per_100k_inhabitants,
+               deaths,
+               death_rate) %>%
+        gather("key", "value",-date) %>%
+        mutate(key = factor(key, levels = unique(key), 
+                            labels = infos)) %>% 
+        ggplot(aes(y = value, x = date)) +
+        geom_point() +
+        geom_line() +
+        ylab("") +
+        xlab("Data") +
+        ggtitle(a) +
+        facet_wrap(key ~ ., scales = "free_y")
+      
     })
 ```
 
