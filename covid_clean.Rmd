@@ -374,13 +374,13 @@ ggplot(aes(x = cidades, y = taxa, fill = taxa)) +
 ggplotly(g)
 ```
 
-# Causas que afetam a ocorrência de COVID-19
+# Fatores que afetam a ocorrência de COVID-19
 
-A primeira pergunta que buscamos identificar os fatores que afetam a ocorrência de COVID-19 em um determinando município. Buscamos fazer isso correlacionando diversos fatores sociais, econômicos e ambientais a duas variáveis respostas: uma binária, (1) separando municípios em infectados ou não infectados; e duas contínuas, (2) usando o número total de casos até o momento por 100 mil habitantes; e (3) identificando quanto tempo levou para o município ter X infecções por COVID-19.
+Em nossa primeira pergunta buscamos identificar quais são os fatores que afetam a ocorrência de COVID-19 em um determinando município. Buscamos fazer isso correlacionando diversos fatores sociais, econômicos e ambientais a duas variáveis respostas: uma binária, (1) separando municípios em infectados ou não infectados; e duas contínuas, (2) usando o número total de casos até o momento por 100 mil habitantes; e (3) identificando quanto tempo levou para o município ter X infecções por COVID-19.
 
 ## Dados dos municípios
 
-No primeiro passo, carregamos os dados socio-economicos obtidos do IBGE, os dados de transporte obtidos do mapbiomas e dados do SUS.
+No primeiro passo, carregamos os dados socio-economicos obtidos do [IBGE](https://sidra.ibge.gov.br/home/pimpfbr/brasil), os dados de transporte intermunicipais obtidos na [Agerba](http://www.agerba.ba.gov.br/transportes/rodoviario/linhas) e dados do [SUS](https://datasus.saude.gov.br/informacoes-de-saude-tabnet/).
 Todos podem ser obtidos aqui: https://github.com/BrunoVilela/COVID19_BAHIA/tree/master/Data
 ```{r ibge, message = FALSE, warning=FALSE}
 ibge <- read_csv2(file("Data/new_ibge.csv", encoding = "UTF-8")) %>%
@@ -440,7 +440,7 @@ munis
 
 ## Infectados ou não infectados
 
-Com os dados de COVID-19 e os fatores economicos, sociais e ambientais, podemos explorar quais desses fatores afetam a COVID-19 no estado da Bahia. Iniciamos explorando quais desses fatores afetam a ocorrência de casos COVID-19 em um determinado município. Para tanto aplicamos um modelo logístico. Como muitos dos fatores estão correlacionados, escolhemos as variáveis com base nas hipóteses pensadas. 
+Tendo como base os dados de COVID-19 e os fatores econômicos, sociais e ambientais, podemos explorar quais desses fatores afetam a COVID-19 no estado da Bahia. Iniciamos nossa abordagem explorando quais desses fatores explicam a ocorrência de casos COVID-19 em certos municípios enquanto outros não possuem casos. Para tanto aplicamos um modelo logístico. Como muitos dos fatores estão correlacionados, escolhemos as variáveis mais importantes para responder a nossa pergunta. 
 
 
 ```{r modelo}
@@ -454,12 +454,12 @@ family = binomial
 )
 ```
 
-Checar a inflação do modelo usando o valor de inflação de cada variável (VIF). A ideia é buscar manter o valor ao redor de 2 no máximo. 
+Checamos a inflação do modelo usando o valor de inflação de cada variável (VIF). Nosso objetivo é manter o valor de VIF abaixo de 2, mas como os dados são atualizados automaticamente os valores de VIF podem oscilar e ultrapassar um pouco o limiar. 
 ```{r}
 vif(reg_log)
 ```
 
-Para evitar possíveis problemas causados por desvios dos pressupostos do modelo logístico (homogeneidade e heterocedasticidade), recalculamos os valores de p por monte carlo, aleatorizando a variavel "afetados".
+Para evitar possíveis problemas causados por desvios dos pressupostos do modelo logístico (homogeneidade da variância), recalculamos os valores de p por monte carlo, aleatorizando a variável "afetados".
 ```{r sim, warning=FALSE}
 resu <- summary(reg_log)
 rept <- 1000
@@ -520,12 +520,12 @@ g
 ```
 
 
-### Conclusão
-A presença de COVID-19 em um município parece ser influenciado pela presença de uma população grande e urbana. Municípios que estão próximos aos grandes aeroportos do estado em Salvador e Ilheus, também tem maior vulnerabilidade. Também é interessante notar que uma maior preciptação parece estar ligada a presença do vírus.
+### Conclusão baseada no resultado de 03/05/20
+Municípios com maior número de habitantes e proporção de população urbana parecem ter maior chance de presença de casos do COVID-19. Municípios também têm maior vulnerabilidade por estarem próximos aos grandes aeroportos do estado em Salvador e Ilheus. É interessante notar a influência de fatores climáticos na qual uma maior preciptação parece estar ligada a presença do vírus.
 
 ## Fatores que afetam o número de casos
 
-No próximo passo, investigamos os fatores que afetam o número de casos confimardos para cada 100 mil habitantes.
+No próximo passo, investigamos os fatores que afetam o número de casos confirmados para cada 100 mil habitantes.
 ```{r cor N}
 reg_N <- lm(
   log(confirmed_per_100k_inhabitants + 1) ~
@@ -536,12 +536,12 @@ reg_N <- lm(
   data = filter(munis, confirmed > 0)
 )
 ```
-
+Checamos a inflação do modelo usando o valor de inflação de cada variável (VIF):
 ```{r}
 vif(reg_N)
 ```
 
-Recalculamos abaixo os valores de p usando uma simulação da Monte Carlo, onde o numero de casos foi aleatorizado e foi recalculada o número de casos por 100k habitantes.
+Recalculamos abaixo os valores de p usando uma simulação da Monte Carlo, onde o número de casos foi aleatorizado e foi recalculada o número de casos por 100k habitantes.
 ```{r}
 resu <- summary(reg_N)
 rept <- 1000
@@ -571,7 +571,7 @@ for (j in 1:length(obs)) {
 }
 ```
 
-Aqui os resultados:
+Aqui apresentamos os resultados:
 ```{r}
 resu
 ```
@@ -600,11 +600,11 @@ g <- munis %>% filter(confirmed > 0) %>%
 ggplotly(g)
 ```
 
-### Conclusão
-3) Em cidades que já tem a COVID-19, o número de casos por 100 mil habitantes parece aumentar principalmente com a proximidade com grandes aeroportos, e diminui em cidades com populações mais rurais e com maior proporção de profissionais com carteira assinada. O número de profissionais de saúde parece estar positivamente correlacionado com o número de casos por 100 mil habitantes, indicando um potencial vies causado pela busca e disponibilidade de assitência médica. Os fatores ambientais também parecem ter um efeito sobre essa variável, indicando que o número de casos aumenta com maior precipitação e menor temperatura. É importante ressaltar que a centralidade na rede rodoviária parece ter um efeito negativo sobre o taxa de casos por 100 mil habitantes, o que seria contraintuito. Esse resultado pode indicar que algumas medidas tomadas nas principais cidades do estado (com maior conexão) podem estar correlacionada com a influência negativa encontrada para esse fator.
+### Conclusão baseada no resultado de 03/05/20
+3) Em cidades com casos registrados de COVID-19, o número de casos por 100 mil habitantes parece aumentar principalmente com a proximidade de grandes aeroportos, e diminui em cidades com populações mais rurais e com maior proporção de pessoas com renda mensal. O número de profissionais de saúde parece estar positivamente correlacionado com o número de casos por 100 mil habitantes, isso pode indicar um possível viés no número de casos registrados causado pela busca e disponibilidade de assistência médica. Os fatores ambientais também parecem ter um efeito sobre o número de casos, indicando que o número de casos aumenta com maior precipitação e menor temperatura. É importante ressaltar que a centralidade na rede rodoviária parece ter um efeito negativo sobre o taxa de casos por 100 mil habitantes, o que seria contra-intuitivo. Esse resultado pode indicar que algumas medidas tomadas nas principais cidades do estado (com maior conexão) podem estar correlacionada com a influência negativa encontrada para esse fator.
 
 ## Dias até N casos
-Na terceira linha de investigação, verificamos quais fatores afetam o númeri de dias até chegar ao caso, 1, 2, 3... N. Para tanto, usamos um modelo de linear com os mesmos fatores incluidos nos testes anteriores. 
+Na terceira linha de investigação, verificamos quais fatores afetam o número de dias até chegar ao caso, 1, 2, 3... N. Para tanto, usamos um modelo de linear com os mesmos fatores incluidos nos testes anteriores. 
 
 ### Dias até o primeiro caso
 Antes de começar calculamos o número de dias até o primeiro caso por cidade, contados a paritir do dia 1 para o estado.
@@ -734,7 +734,7 @@ Verificando o efeito da colinearidade no modelo.
 vif(reg_dias)
 ```
 
-Recalculamos abaixo os valores de p usando uma simulação da Monte Carlo, onde o numero de casos foi aleatorizado e foi recalculada o número de casos por 100k habitantes.
+Recalculamos abaixo os valores de p usando uma simulação da Monte Carlo, onde o número de casos foi aleatorizado e foi recalculada o número de casos por 100k habitantes.
 ```{r}
 resu <- summary(reg_dias)
 rept <- 1000
