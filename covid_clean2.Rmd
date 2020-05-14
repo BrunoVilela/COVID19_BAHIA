@@ -1,0 +1,805 @@
+---
+title: "Explorando fatores que afetam a transmissão de COVID-19 na Bahia"
+author: "Grupo de Estudos em Ecologia Espacial - UFBA"
+date: "4/17/2020"
+runtime: shiny
+output:
+  html_document:
+    toc: true
+    theme: journal
+    df_print: paged
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+# Autores
+Essa pesquisa foi realizado pelo grupo de estudos em ecologia espacial da UFBA, incluindo os seguintes pesquisadores: 
+
+- Dr. Anderson Medina (Pós-doc IBIO-UFBA) 
+- Dr. Bruno Vilela (Professor IBIO-UFBA)
+- Daniel Gonçalves (Mestrando IBIO-UFBA)
+- Dr. Gilson Carvalho (Professor ICS-UFBA)
+- Dr. Ricardo Dobrovolski (Professor IBIO-UFBA)
+- Dr. Pavel Dodonov (Professor IBIO-UFBA)
+
+# Apresentação
+
+Esse documento traz os resultados e códigos utilizados nas análises dos fatores que contribuem para a expansão dos casos de covid-19 no estado da Bahia.
+
+Especificamente buscamos responder as seguintes perguntas nesse documento:
+
+1) Como a taxa de crescimento tem variado ao longo do tempo na Bahia.
+
+2) Quais fatores estão correlacionados à ocorrência de COVID-19 em um determinando município.
+
+3) Quais fatores estão correlacionados ao número de casos de COVID-19 a cada 100 mil habitantes em um determinando município.
+
+4) Quais fatores estão correlacionados ao número de dias até o primeiro e décimo caso de COVID-19 em um determinando município.
+
+
+
+# Síntese dos principais resultados
+
+1) Apesar do número de casos terem subido, a taxa de crescimento do vírus na Bahia e em Salvador vem diminuindo, mas está aparentemente estabilizada no momento.
+
+2) A presença de COVID-19 em um município parece ser influenciado pela presença de uma população grande e urbana. Municípios que estão próximos aos grandes aeroportos do estado, localizados em Salvador e Ilheus, também têm maior vulnerabilidade. É interessante notar que uma maior preciptação parece estar ligada a presença do vírus.
+
+3) Em cidades que já tem a COVID-19, o número de casos por 100 mil habitantes parece aumentar principalmente com a proximidade com grandes aeroportos, e diminui em cidades com populações mais rurais e com maior proporção de profissionais com carteira assinada. O número de profissionais de saúde parece estar positivamente correlacionado com o número de casos por 100 mil habitantes, indicando um potencial vies causado pela busca e disponibilidade de assitência médica. Os fatores ambientais também parecem ter um efeito sobre essa variável, indicando que o número de casos aumenta com maior precipitação e menor temperatura. É importante ressaltar que a centralidade na rede rodoviária parece ter um efeito negativo sobre o taxa de casos por 100 mil habitantes, o que seria contraintuito. Esse resultado pode indicar que algumas medidas tomadas nas principais cidades do estado (com maior conexão) podem estar correlacionada com a influência negativa encontrada para esse fator.
+
+4) O número de dias até o primeiro e até o décimo caso é principalmente afetado pelo tamanho da população. A proporção de população rural parece diminuir o número de dias até a primeira contaminação também.
+
+
+# Antes de rodar as análises
+
+A versão do R utilizada foi:
+```{r}
+R.version
+```
+
+Se for seguir o código para recriar as análises, antes de inciar, carregue e instale os seguintes pacotes.
+```{r pacotes, message=FALSE}
+library(coronabr) # pode baixar aqui: https://github.com/liibre/coronabr
+library(tidyverse)
+library(car)
+library(randomForest)
+library(rgdal) # load map
+library(sp) # plot maps
+library(plotly)
+library(shiny)
+library(leaflet)
+library(RColorBrewer)
+```
+
+O código também está disponível em .Rmd no seguinte link: https://github.com/BrunoVilela/COVID19_BAHIA/blob/master/covid_clean.Rmd
+
+
+# Download dos dados de COVID-19 para a Bahia
+
+Com o código abaixo podemos baixar os dados para todos os municipios Bahia.
+Para saber mais sobre as fontes do dados acesse o seguinte link: https://github.com/liibre/coronabr. 
+
+```{r baixar os dados}
+covid0 <- as_tibble(get_corona_br(uf = "BA"))
+```
+
+Pequenos ajustes na tabela:
+```{r ajustes}
+covid <- covid0 %>%
+  filter(place_type == "city") %>%
+  mutate(city = factor(city, levels = unique(city)))
+```
+
+Dados por municipio:
+```{r}
+mun_covid <- covid %>%
+  filter(date == date[1]) %>%
+  mutate(afetados = ifelse(confirmed > 0, 1, 0))
+```
+
+# Panorama geral da Bahia
+
+Estatísticas dos casos na Bahia:
+```{r estatisticas}
+stats <- mun_covid %>%
+  summarise(
+    "Casos totais" = sum(confirmed),
+    "Mortes totais" = sum(deaths),
+    "Número de municipios afetados" = sum(confirmed > 0)
+  )
+```
+```{r}
+print(stats)
+```
+
+Casos por município:
+```{r}
+g <- mun_covid %>% 
+  filter(confirmed > 0) %>%
+  mutate(city = as.character(city),
+    city = fct_reorder(city, -confirmed)) %>% 
+  top_n(30, confirmed) %>% 
+  ggplot(aes(x = city, y = confirmed)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_y_log10() +
+  xlab("") +
+  ylab("Casos confirmados de COVID-19") +
+  ggtitle("As 30 cidades mais afetadas na Bahia em número total")
+ggplotly(g)
+```
+
+```{r}
+g <- mun_covid %>% 
+  filter(confirmed > 0) %>%
+  mutate(city = as.character(city),
+    city = fct_reorder(city, -confirmed_per_100k_inhabitants)) %>% 
+  top_n(30, confirmed_per_100k_inhabitants) %>% 
+  ggplot(aes(x = city, y = confirmed_per_100k_inhabitants)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  xlab("") +
+  ylab("Casos de COVID-19 por 100k hab") +
+  ggtitle("As 30 cidades mais afetadas na Bahia em casos por 100k hab")
+ggplotly(g)
+```
+
+Mapa de casos na Bahia.
+```{r, message = FALSE, warning=FALSE}
+ba_map <- readOGR("Data/bahia.shp")
+names(ba_map)[2] <- "ibge"
+ba_map@data[, 2] <- as.numeric(as.character(ba_map@data[, 2]))
+ba_map@data <- left_join(ba_map@data, mun_covid,
+                         by = c("ibge" = "city_ibge_code"))
+```
+
+```{r}
+# Prepare the text for tooltips:
+mytext <- paste(
+    "Município: ", ba_map@data$NM_MUNICIP,"<br/>", 
+    "Casos confirmados: ", ba_map@data$confirmed, "<br/>", 
+    "Casos por 100k habitantes: ", round(ba_map@data$confirmed_per_100k_inhabitants, 2), "<br/>", 
+    "Mortes: ", ba_map@data$deaths, "<br/>",
+    "Taxa de mortalidade: ", ba_map@data$death_rate,
+    sep="") %>%
+  lapply(htmltools::HTML)
+```
+
+
+```{r, echo = TRUE}
+infos <- c("Casos confirmados", "Casos por 100k habitantes",
+           "Mortes", "Taxa de mortalidade")
+ selectInput("region3", "Informação:",
+                choices = infos,
+                selected = "Casos confirmados")
+  leafletOutput("phonePlot3")
+```
+
+```{r , context="server", warning=FALSE}
+output$phonePlot3 = renderLeaflet({
+  t1 <- input$region3
+  round_value <- 0
+  if (t1 == "Casos confirmados") {
+    y <- ba_map@data$confirmed
+  }
+  if (t1 == "Casos por 100k habitantes") {
+    y <- ba_map@data$confirmed_per_100k_inhabitants
+  }
+  if (t1 == "Mortes") {
+    y <- ba_map@data$deaths
+  }
+  if (t1 == "Taxa de mortalidade") {
+    y <- ba_map@data$death_rate
+    round_value <- 3
+  }
+  
+  mybins <- NULL
+  
+  x1 = 1
+  while(length(mybins) < 10 & x1 > 0.0001) {
+    mybins <- unique(round(quantile(y, probs = seq(0, 1, x1), na.rm = T),
+                           round_value))
+    x1 <- x1 - .1
+  }
+  if (length(mybins) < 5) {
+    mybins <- as.numeric(names(table(y)))
+  }
+  mypalette <-
+    colorBin(
+      palette = "YlOrRd",
+      domain = y,
+      na.color = "gray",
+      bins = mybins
+    )
+  
+  # Final Map
+  leaflet(ba_map) %>%
+    addTiles()  %>%
+    # setView( lat=-46, lng=-11 , zoom=3) %>%
+    addPolygons(
+      fillColor = ~ mypalette(y),
+      stroke = TRUE,
+      fillOpacity = 0.9,
+      color = "black",
+      weight = 0.3,
+      label = mytext,
+      labelOptions = labelOptions(
+        style = list("font-weight" = "normal", padding = "3px 8px"),
+        textsize = "13px",
+        direction = "auto"
+      )
+    ) %>%
+    addLegend(
+      pal = mypalette,
+      values =  ~ y,
+      opacity = 0.9,
+      title = t1,
+      position = "bottomleft"
+    )
+})
+```
+
+# Taxa ao longo do tempo
+
+Número de casos, casos por 100 mil habitantes, mortes e taxa de mortalidade no tempo para o estado da Bahia.
+```{r}
+covid_ba <- covid0 %>%
+  filter(place_type == "state")
+covid_ba2 <- covid_ba %>% 
+        select(confirmed,
+               date,
+               confirmed_per_100k_inhabitants,
+               deaths,
+               death_rate) %>%
+        gather("key", "value",-date) %>%
+        mutate(key = factor(key, levels = unique(key), 
+                            labels = infos))
+
+g <- ggplot(covid_ba2, aes(y = value, x = date)) +
+  geom_point() +
+  geom_line() +
+  ylab("") +
+  xlab("Data") +
+  ggtitle("Bahia") +
+  facet_wrap(key ~ ., scales = "free_y")
+
+ggplotly(g)
+```
+
+Aqui verificamos como a taxa de crescimento do vírus tem variado ao longo do tempo na Bahia.
+```{r}
+rs <- covid_ba$confirmed[(nrow(covid_ba) - 1):1] / covid_ba$confirmed[nrow(covid_ba):2] 
+
+taxa <- tibble(data = rev(covid_ba$date[-nrow(covid_ba)]), rs)
+g <- ggplot(taxa, aes(y = rs, x = data)) +
+  geom_smooth() +
+  geom_point() +
+  geom_line() +
+  scale_y_log10() +
+  ylab("Taxa de crescimento dos casos de COVID-19") +
+  xlab("Data") +
+  ggtitle("Bahia")
+ggplotly(g)
+```
+
+Verifique o número de casos, casos por 100 mil habitantes, mortes e taxa de mortalidade no tempo para cada município:
+```{r, echo = TRUE}
+ selectInput("region", "Cidade:",
+                choices = unique(mun_covid$city),
+                selected = "Salvador")
+  plotOutput("phonePlot")
+```
+
+```{r , context="server"}
+   output$phonePlot = renderPlot({
+      a <- input$region
+      
+      covid0 %>%
+        filter(city == a) %>%
+        select(confirmed,
+               date,
+               confirmed_per_100k_inhabitants,
+               deaths,
+               death_rate) %>%
+        gather("key", "value",-date) %>%
+        mutate(key = factor(key, levels = unique(key), 
+                            labels = infos)) %>% 
+        ggplot(aes(y = value, x = date)) +
+        geom_point() +
+        geom_line() +
+        ylab("") +
+        xlab("Data") +
+        ggtitle(a) +
+        facet_wrap(key ~ ., scales = "free_y")
+      
+    })
+```
+
+Verifique a variação da taxa de crescimento ao longo do tempo para cada município:
+```{r, echo = TRUE}
+ selectInput("region2", "Cidade:",
+                choices = unique(mun_covid$city),
+                selected = "Salvador")
+  plotOutput("phonePlot2")
+```
+
+```{r , context="server"}
+   output$phonePlot2 = renderPlot({
+covid_sa <- covid0 %>%
+  filter(city == input$region2) 
+rs <- covid_sa$confirmed[(nrow(covid_sa) - 1):1] / covid_sa$confirmed[nrow(covid_sa):2] 
+
+taxa <- tibble(data = rev(covid_sa$date[-nrow(covid_sa)]), rs)
+ggplot(taxa, aes(y = rs, x = data)) +
+  geom_smooth() +
+  geom_point() +
+  geom_line() +
+  scale_y_log10() +
+  ylab("Taxa de crescimento dos casos de COVID-19") +
+  xlab("Data")  +
+  ggtitle(input$region2)
+    })
+```
+
+Variação da taxa durante a última semana por municípios com mais de 20 casos confirmados. A variação é contada a partir do caso 10. Em azul, os muncipios onde a taxa vem diminuindo ao longo do tempo, em vermelho, os municipios onde a taxa vem aumentando.
+```{r}
+cidades <- as.character(mun_covid$city[mun_covid$confirmed > 20])
+n <- length(cidades)
+rs_mun <- numeric(n)
+for (i in 1:n) {
+  mun_i <- covid %>%
+    filter(city == cidades[i],
+           confirmed > 10)
+  if (nrow(mun_i) > 2) {
+    rs <-
+      #mun_i$confirmed[(nrow(mun_i) - 1):1] / mun_i$confirmed[nrow(mun_i):2]
+      mun_i$confirmed[(nrow(mun_i) - 1):(nrow(mun_i) - 8)] / mun_i$confirmed[nrow(mun_i):(nrow(mun_i) - 7)]
+    rs <- rs[!is.na(rs) & !is.infinite(rs)]
+    if (!all(rs == 1)) {
+      x <- 1:length(rs)
+      rs_mun[i] <- lm(rs ~ x)$coefficients[2]
+    }
+  }
+}
+taxa_mun <- tibble(cidades, taxa = rs_mun)
+taxa_mun <- taxa_mun[rs_mun != 0, ]
+g <- taxa_mun %>% mutate(cidades = fct_reorder(cidades, taxa)) %>% 
+  na.omit() %>% 
+ggplot(aes(x = cidades, y = taxa, fill = taxa)) +
+  geom_col() +
+  theme(axis.text.x =  element_text(angle = 90),
+        legend.position = "none") +
+  scale_fill_gradient2(low = "blue", mid = "gray", high = "red") +
+  xlab("") +
+  ylab("Variação da taxa")
+ggplotly(g)
+```
+
+# Fatores que afetam a ocorrência de COVID-19
+
+Em nossa primeira pergunta buscamos identificar quais são os fatores que afetam a ocorrência de COVID-19 em um determinando município. Buscamos fazer isso correlacionando diversos fatores sociais, econômicos e ambientais a duas variáveis respostas: uma binária, (1) separando municípios em infectados ou não infectados; e duas contínuas, (2) usando o número total de casos até o momento por 100 mil habitantes; e (3) identificando quanto tempo levou para o município ter X infecções por COVID-19.
+
+## Dados dos municípios
+
+No primeiro passo, carregamos os dados socio-economicos obtidos do [IBGE](https://sidra.ibge.gov.br/home/pimpfbr/brasil), os dados de transporte intermunicipais obtidos na [Agerba](http://www.agerba.ba.gov.br/transportes/rodoviario/linhas) e dados do [SUS](https://datasus.saude.gov.br/informacoes-de-saude-tabnet/).
+Todos podem ser obtidos aqui: https://github.com/BrunoVilela/COVID19_BAHIA/tree/master/Data
+```{r ibge, message = FALSE, warning=FALSE}
+ibge <- read_csv2(file("Data/new_ibge.csv", encoding = "UTF-8")) %>%
+  separate(cidade, c("Cidade", "Estado"), sep = "\\(") %>%
+  mutate(Estado = str_remove(Estado, "\\)")) %>%
+  filter(Estado == "BA") %>%
+  select(-X1)
+
+federal <- read_csv2("Data/federal_w_codes.csv") %>% select(-X1)
+centralidade <- read_csv2("Data/new.dat.ba.csv") %>% select(-X1)
+clima <- read_csv2("Data/climatic.br.csv") %>%
+  mutate(
+    precTotal = rowSums(.[3:7]),
+    tmean = apply(.[8:17], 1, mean)
+  ) %>%
+  select(-X1)
+meso <- read_csv("Data/meso.csv")
+colnames(meso)[1] <- "mesoregiao"
+aero <- read_csv2("Data/new.main.air.ba.csv") %>% select(-X1)
+sus <- read_csv2("Data/new.data.sus.csv") %>% select(-X1)
+dec <- read_csv("Data/decretos.csv") %>% 
+  select(ibge, rod_fechada)
+filbin<-read_csv2("Data/binary.csv")
+filcas<-read_csv2("Data/quantitative.csv")
+
+colnames(filbin)[2:ncol(filbin)]<-paste0("filbin", 1:(ncol(filbin)-1))
+colnames(filcas)[2:ncol(filcas)]<-paste0("filcas", 1:(ncol(filcas)-1))
+```
+
+Depois de carregados, juntamos as tabelas com todas essas informações.
+```{r juntar}
+munis <- left_join(ibge, centralidade, by = c("cod_ibge" = "ibgecode")) %>%
+  left_join(federal, by = c("cod_ibge" = "ibge")) %>%
+  left_join(mun_covid, by = c("cod_ibge" = "city_ibge_code")) %>%
+  left_join(clima, by = c("cod_ibge" = "ibge")) %>%
+  left_join(meso, by = c("cod_ibge" = "code")) %>%
+  left_join(aero, by = c("cod_ibge" = "ibge")) %>%
+  left_join(sus, by = c("cod_ibge" = "ibge")) %>% 
+  left_join(dec, by = c("cod_ibge" = "ibge")) %>% 
+  left_join(filbin, by = c("cod_ibge" = "ibge")) %>% 
+  left_join(filcas, by = c("cod_ibge" = "ibge")) %>% 
+  
+  mutate(
+    dens.road = ifelse(is.na(dens.road), 0, dens.road),
+    afetados = ifelse(is.na(afetados), 0, afetados),
+    airport = ifelse(is.na(airport), "NO", airport),
+    confirmed = ifelse(is.na(confirmed), 0, confirmed),
+    rod_fechada = ifelse(is.na(rod_fechada), 0, rod_fechada),
+    leitos = ifelse(is.na(leitos), 0, leitos),
+    leitos = ifelse(is.na(leitos), 0, leitos),
+    profissionais.saude = ifelse(is.na(profissionais.saude), 0, profissionais.saude/total.pop),
+    confirmed_per_100k_inhabitants = ifelse(is.na(confirmed_per_100k_inhabitants), 0,
+      confirmed_per_100k_inhabitants
+    ),
+    tam_pop_urb = total.pop * (1 - perc.rural)
+  )
+```
+
+Ao final obtemos a seguinte tabela:
+```{r}
+munis
+```
+
+## Infectados ou não infectados
+
+Tendo como base os dados de COVID-19 e os fatores econômicos, sociais e ambientais, podemos explorar quais desses fatores afetam a COVID-19 no estado da Bahia. Iniciamos nossa abordagem explorando quais desses fatores explicam a ocorrência de casos COVID-19 em certos municípios enquanto outros não possuem casos. Para tanto aplicamos um modelo logístico. Como muitos dos fatores estão correlacionados, escolhemos as variáveis mais importantes para responder a nossa pergunta. 
+
+
+```{r modelo}
+reg_log <- glm(afetados ~
+                   nat.airport + log(total.pop) + perc.rural +
+                   log(eingen.cen.dist) + rod_fechada + school.year +
+                   perc.with.wages + dist.min.int +
+                   profissionais.saude+log(precTotal) + tmean +
+                   filcas59 + dorm_3_rel,
+data = munis,
+family = binomial
+)
+```
+
+Checamos a inflação do modelo usando o valor de inflação de cada variável (VIF). Nosso objetivo é manter o valor de VIF abaixo de 2, mas como os dados são atualizados automaticamente os valores de VIF podem oscilar e ultrapassar um pouco o limiar. 
+```{r}
+vif(reg_log)
+```
+
+Para evitar possíveis problemas causados por desvios dos pressupostos do modelo logístico (homogeneidade da variância), recalculamos os valores de p por monte carlo, aleatorizando a variável "afetados".
+```{r sim, warning=FALSE}
+resu <- summary(reg_log)
+rept <- 1000
+obs_z <- summary(reg_log)$coefficients[, 3]
+obs <- coefficients(reg_log)
+zs <- coefs <- matrix(ncol = length(obs), nrow = rept)
+colnames(zs) <- colnames(coefs) <- names(obs)
+for (i in 1:rept) {
+  munis$rnd_afetados <- sample(munis$afetados)
+  reg_log <- glm(rnd_afetados ~ 
+                   nat.airport + log(total.pop) + perc.rural +
+                   log(eingen.cen.dist) + + rod_fechada +school.year +
+                   perc.with.wages + dist.min.int +
+                   profissionais.saude+log(precTotal) + tmean +
+                   filcas59 + dorm_3_rel,
+            data = munis,
+            family = binomial)
+  zs[i, ] <- summary(reg_log)$coefficients[, 3]
+  coefs[i, ] <- coefficients(reg_log)
+}
+
+for (j in 1:length(obs)) {
+  maior <- (sum(obs[j] >= coefs[, j]) + 1 ) / (rept + 1) * 2
+  menor <- (sum(obs[j] <= coefs[, j]) + 1) / (rept + 1) * 2
+  resu$coefficients[j, 4] <- ifelse(maior > menor, menor, maior)
+}
+```
+
+Aqui os resultados:
+```{r}
+resu
+```
+
+### Gráficos
+
+```{r}
+g <- munis %>% 
+  mutate(afetados = ifelse(afetados == 1, "Sim", "Não"),
+         `log(total.pop)` = log(total.pop), 
+         `log(eingen.cen.dist)` = log(eingen.cen.dist), 
+         `log(precTotal)` = log(precTotal)) %>%
+  select(afetados, `log(total.pop)`, perc.rural,
+              `log(eingen.cen.dist)`, school.year,
+              perc.with.wages, dist.min.int, profissionais.saude,
+              `log(precTotal)`, tmean,
+              rod_fechada, dorm_3_rel, filcas59) %>% 
+  gather("Variavel", "Valor", -afetados) %>% 
+ # plot
+  ggplot(aes(x = afetados ,
+           y = Valor, 
+           fill = afetados)) +
+  geom_violin(width = 1) +
+  geom_boxplot(width=0.1, color="black", alpha = .2) +
+  theme(legend.position = "none") + 
+  xlab("Município afetado") +
+  ylab("") +
+  facet_wrap(Variavel~., scales = "free_y")
+
+g
+```
+
+
+### Conclusão baseada no resultado de 09/05/20
+
+
+## Fatores que afetam o número de casos
+
+No próximo passo, investigamos os fatores que afetam o número de casos confirmados para cada 100 mil habitantes.
+```{r cor N}
+reg_N <- lm(
+   log(confirmed_per_100k_inhabitants + 1) ~
+    nat.airport +  perc.rural +
+    log(eingen.cen.dist) +  rod_fechada +
+    perc.with.wages + dist.min.int + profissionais.saude +
+    log(precTotal) + tmean + filcas59 + dorm_3_rel,
+  data = filter(munis, confirmed > 0)
+)
+```
+Checamos a inflação do modelo usando o valor de inflação de cada variável (VIF):
+```{r}
+vif(reg_N)
+```
+
+Recalculamos abaixo os valores de p usando uma simulação da Monte Carlo, onde o número de casos foi aleatorizado e foi recalculada o número de casos por 100k habitantes.
+```{r}
+resu <- summary(reg_N)
+rept <- 1000
+obs <- coef(reg_N)
+coefs <- matrix(ncol = length(obs), nrow = rept)
+colnames(coefs) <- names(obs)
+for (i in 1:rept) {
+ munis$rnd_cases <- (sample(munis$confirmed) / munis$total.pop) * 1000
+  while(sum(munis$nat.airport[munis$rnd_cases > 0] == "YES") < 2) {
+    munis$rnd_cases <- (sample(munis$confirmed) / munis$total.pop) * 1000
+  }
+ reg_N <- lm(
+   log(rnd_cases + 1) ~
+    nat.airport +  perc.rural +
+    log(eingen.cen.dist) +  rod_fechada +
+    perc.with.wages + dist.min.int + profissionais.saude +
+    log(precTotal) + tmean + filcas59 + dorm_3_rel,
+   data = filter(munis, rnd_cases > 0)
+ )
+ coefs[i,] <- coef(reg_N)
+}
+
+for (j in 1:length(obs)) {
+  maior <- (sum(obs[j] >= coefs[, j]) + 1 ) / (rept + 1) * 2
+  menor <- (sum(obs[j] <= coefs[, j]) + 1) / (rept + 1) * 2
+  resu$coefficients[j, 4] <- ifelse(maior > menor, menor, maior)
+}
+```
+
+Aqui apresentamos os resultados:
+```{r}
+resu
+```
+
+### Gráficos
+
+```{r}
+g <- munis %>% filter(confirmed > 0) %>% 
+  mutate(`log(total.pop)` = log(total.pop), 
+         `log(eingen.cen.dist)` = log(eingen.cen.dist), 
+         `log(precTotal)` = log(precTotal)) %>%
+  select(confirmed_per_100k_inhabitants, perc.rural,
+              `log(eingen.cen.dist)`, rod_fechada,
+              perc.with.wages, dist.min.int, profissionais.saude,
+              `log(precTotal)`, tmean, filcas59, dorm_3_rel) %>% 
+  gather("Variavel", "Valor", -confirmed_per_100k_inhabitants) %>% 
+ # plot
+  ggplot(aes(y = confirmed_per_100k_inhabitants,
+           x = Valor)) +
+     scale_y_log10() +
+  geom_point() +
+  ylab("Número de casos por 100 mil habitantes") +
+  xlab("") +
+  facet_wrap(Variavel ~ ., scales = "free_x")
+
+ggplotly(g)
+```
+
+### Conclusão baseada no resultado de 09/05/20
+
+
+## Dias até N casos
+Na terceira linha de investigação, verificamos quais fatores afetam o número de dias até chegar ao caso, 1, 2, 3... N. Para tanto, usamos um modelo de linear com os mesmos fatores incluidos nos testes anteriores. 
+
+### Dias até o primeiro caso
+Antes de começar calculamos o número de dias até o primeiro caso por cidade, contados a paritir do dia 1 para o estado.
+```{r}
+cidades <- na.omit(unique(covid$city_ibge_code))
+n <- length(cidades)
+baseline <- as.Date.character('2020-03-06')
+dia1 <- numeric(n)
+for (i in 1:n) {
+  covid_i <- covid %>%  
+    filter(city_ibge_code == cidades[i], confirmed > 0) 
+  dia1[i] <- as.numeric(min(covid_i$date) - baseline)
+}
+rem <- is.infinite(dia1)
+dias <- tibble(cod_ibge = cidades, dia1)[!rem, ]
+munis <- munis %>% left_join(dias)
+```
+
+Modelo:
+```{r}
+reg_dias <- lm(
+  dia1 ~
+    nat.airport + perc.rural +
+    log(eingen.cen.dist) + 
+    perc.with.wages + dist.min.int + profissionais.saude +
+    log(precTotal) + tmean + dorm_3_rel +filcas59,
+  data = filter(munis, confirmed > 0
+  )
+)
+```
+
+Verificando o efeito da colinearidade no modelo.
+```{r}
+vif(reg_dias)
+```
+
+Recalculamos abaixo os valores de p usando uma simulação da Monte Carlo, onde o numero de casos foi aleatorizado e foi recalculada o número de casos por 100k habitantes.
+```{r}
+resu <- summary(reg_dias)
+rept <- 1000
+obs <- coef(reg_dias)
+coefs <- matrix(ncol = length(obs), nrow = rept)
+colnames(coefs) <- names(obs)
+for (i in 1:rept) {
+  munis_i <- filter(munis, confirmed > 0)
+ munis_i$rnd_cases <- sample(munis_i$dia1)
+  # while(sum(munis$airport[munis_i$rnd_cases > 0] == "YES") < 2) {
+  #   munis_i$rnd_cases <- sample(munis_i$dia1)
+  # }
+ reg_dias <- lm(
+   rnd_cases ~
+    nat.airport + perc.rural +
+    log(eingen.cen.dist) +
+    perc.with.wages + dist.min.int + profissionais.saude +
+    log(precTotal) + tmean + dorm_3_rel +filcas59,
+   data = munis_i)
+ coefs[i,] <- coef(reg_dias)
+}
+
+for (j in 1:length(obs)) {
+  maior <- (sum(obs[j] >= coefs[, j]) + 1 ) / (rept + 1) * 2
+  menor <- (sum(obs[j] <= coefs[, j]) + 1) / (rept + 1) * 2
+  resu$coefficients[j, 4] <- ifelse(maior > menor, menor, maior)
+}
+```
+
+Aqui os resultados:
+```{r}
+resu
+```
+
+
+#### Gráficos
+```{r}
+g <- munis %>% filter(confirmed > 0) %>% 
+  mutate(`log(total.pop)` = log(total.pop), 
+         `log(eingen.cen.dist)` = log(eingen.cen.dist), 
+         `log(precTotal)` = log(precTotal)) %>%
+  select(dia1, perc.rural,
+              `log(eingen.cen.dist)`,
+              perc.with.wages, dist.min.int, profissionais.saude,
+              `log(precTotal)`, tmean , dorm_3_rel, filcas59) %>% 
+  gather("Variavel", "Valor", -dia1) %>% 
+ # plot
+  ggplot(aes(y = dia1,
+           x = Valor)) +
+     scale_y_log10() +
+  geom_point() +
+  ylab("Dias até o primeiro caso") +
+  xlab("") +
+  facet_wrap(Variavel ~ ., scales = "free_x")
+
+ggplotly(g)
+```
+
+
+### Dias até o décimo caso
+Antes de começar calculamos o número de dias até o décimo caso por cidade.
+```{r, warning=FALSE}
+cidades <- na.omit(unique(covid$city_ibge_code))
+n <- length(cidades)
+baseline <- as.Date.character('2020-03-06')
+dia10 <- numeric(n)
+for (i in 1:n) {
+  covid_i <- covid %>%  
+    filter(city_ibge_code == cidades[i], confirmed > 9) 
+  dia10[i] <- as.numeric(min(covid_i$date) - baseline)
+}
+rem <- is.infinite(dia10)
+dias <- tibble(cod_ibge = cidades, dia10)[!rem, ]
+munis <- munis %>% left_join(dias)
+```
+
+Neste modelo precisaram ser retiradas algumas variáveis, devido a um aumento na inflação do modelo gerado pelo menor número de unidades amostrais.
+```{r}
+munis_mod <- munis %>% filter(!is.na(dia10) & !is.infinite(dia10))
+reg_dias <- lm(
+  dia10 ~
+      perc.rural +
+      log(precTotal) + tmean,
+  data = munis_mod
+  )
+```
+
+Verificando o efeito da colinearidade no modelo.
+```{r}
+vif(reg_dias)
+```
+
+Recalculamos abaixo os valores de p usando uma simulação da Monte Carlo, onde o número de casos foi aleatorizado e foi recalculada o número de casos por 100k habitantes.
+```{r}
+resu <- summary(reg_dias)
+rept <- 1000
+obs <- coef(reg_dias)
+coefs <- matrix(ncol = length(obs), nrow = rept)
+colnames(coefs) <- names(obs)
+for (i in 1:rept) {
+  munis_i <-  munis_mod
+ munis_i$rnd_cases <- sample(munis_i$dia10)
+  # while(sum(munis$airport[munis_i$rnd_cases > 0] == "YES") < 2) {
+  #   munis_i$rnd_cases <- sample(munis_i$dia10)
+  # }
+ reg_dias <- lm(
+   rnd_cases ~
+      perc.rural + 
+      log(precTotal) + tmean,
+   data = munis_i)
+ coefs[i,] <- coef(reg_dias)
+}
+
+for (j in 1:length(obs)) {
+  maior <- (sum(obs[j] >= coefs[, j]) + 1 ) / (rept + 1) * 2
+  menor <- (sum(obs[j] <= coefs[, j]) + 1) / (rept + 1) * 2
+  resu$coefficients[j, 4] <- ifelse(maior > menor, menor, maior)
+}
+```
+
+Aqui os resultados:
+```{r}
+resu
+```
+
+#### Gráficos
+
+```{r}
+g <- munis %>% filter(confirmed > 9) %>% 
+  mutate(`log(total.pop)` = log(total.pop), 
+         `log(eingen.cen.dist)` = log(eingen.cen.dist), 
+         `log(precTotal)` = log(precTotal)) %>%
+  select(dia10, `log(total.pop)`, perc.rural,
+              `log(eingen.cen.dist)`, school.year,
+              perc.with.wages, dist.min.int, profissionais.saude,
+              `log(precTotal)`, tmean) %>% 
+  gather("Variavel", "Valor", -dia10) %>% 
+ # plot
+  ggplot(aes(y = dia10,
+           x = Valor)) +
+     scale_y_log10() +
+  geom_point() +
+  ylab("Dias até o primeiro caso") +
+  xlab("") +
+  facet_wrap(Variavel ~ ., scales = "free_x")
+
+ggplotly(g)
+```
+
+### Conclusão
+Os resultados indicam que o tamanho da população é o principal fator determinando o número de dias até o primeiro e até o décimo caso. A proporção de população rural parece diminuir o número de dias até a primeira contaminação também.
