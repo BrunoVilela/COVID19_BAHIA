@@ -1,0 +1,15 @@
+Variável;Descrição;Ano;Fonte
+nat.airport;Presença de aeroporto com voos comerciais nacionais 2018;2019;ANAC
+total.pop;População total do munícipio 2010;2010;IBGE
+perc.rural;Porcentagem da população rural 2010;2010;IBGE
+eingen.cen.dist;Centralidade na rede das linhas intermunicipais da Bahia ;?;Agerba
+rod_fechada;Número de dias que o munícipio ficou com as linhas intermunicipais fechadas por decreto estadual  ;2020;Agerba/Diário Oficial
+school.year;Escolaridade da população em anos ;2010;IBGE
+perc.with.wages;Porcentagem da população com renda mensal (Carteira assinada ou não);2010;IBGE
+dist.min.int;Distância minima de aeroporto com voos comerciais internacionais (Salvador e Porto Seguro);2019;ANAC
+profissionas.saude;Profissionais que trabalham na área da saúde inclui todos profisionais (e.g.: administrativos, técnicos, auxiliares, saúde complementar) ;2020;Datasus
+precTotal;Precipitação média nos últimos 4 meses;2018;Worldclim
+tmean;Temperatura média nos últimos 4 meses;2018;Worldclim
+filcas59;"Filtro ""espacial"" usando a informação do número de casos nos municípios vizinhos. Quantitativo. 59 é o número de dias depois do primeiro caso.";;
+filbin59;"Filtro ""espacial"" usando a informação do número municípios vizinhos com casos. Binário. 59 é o número de dias depois do primeiro caso.";;
+dorm_3_rel;Porcentagem das casas que tem 3 ou mais pessoas por dormitório ;2010;IBGE
