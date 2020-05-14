@@ -387,7 +387,7 @@ ibge <- read_csv2(file("Data/new_ibge.csv", encoding = "UTF-8")) %>%
   separate(cidade, c("Cidade", "Estado"), sep = "\\(") %>%
   mutate(Estado = str_remove(Estado, "\\)")) %>%
   filter(Estado == "BA") %>%
-  select(-X1, -X)
+  select(-X1)
 
 federal <- read_csv2("Data/federal_w_codes.csv") %>% select(-X1)
 centralidade <- read_csv2("Data/new.dat.ba.csv") %>% select(-X1)
