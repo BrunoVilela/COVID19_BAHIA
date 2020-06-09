@@ -1,0 +1,277 @@
+---
+title: "Transport"
+author: "Anderson Medina"
+date: "19/05/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Pacotes
+
+```{r, message=FALSE}
+library(coronabr)
+library(rgdal) #shapes
+library(GGally)
+library(network)
+library(igraph)
+library(networkD3)
+```
+
+Carregando dados do Covid e mapa da Bahia
+```{r, message=FALSE}
+ba.cov <- get_corona_br(uf = "BA")
+ba.shp <- readOGR("Data/bahia.shp")
+```
+
+Criando matrizes de ocorrência e frequência de casos
+
+```{r}
+## Converting corona data to matrix
+ba.inc<-table(ba.cov$city_ibge_code, ba.cov$date)
+x<-match(ba.shp$CD_GEOCMU, rownames(ba.inc))
+ba.inc<-ba.inc[x,]
+rownames(ba.inc)<-ba.shp$CD_GEOCMU
+attributes(ba.inc)$class <- "matrix"
+ba.inc<-ifelse(is.na(ba.inc), 0, ba.inc)
+
+
+ba.fre<-ba.inc
+y<-7
+for (y in 1:ncol(ba.inc))
+{
+  temp<-subset(ba.cov, ba.cov$date==colnames(ba.inc)[y],
+               select=c(city_ibge_code, confirmed_per_100k_inhabitants))
+  tx<-match(temp[,1], ba.shp$CD_GEOCMU)
+  tc<-temp[,2]
+  tc<-tc[!is.na(tx)]
+  tx<-tx[!is.na(tx)]
+  ba.fre[tx, y]<-tc
+}
+
+```
+
+Determinando os intervalos com % de municípios com casos registrados
+
+```{r}
+n.city<-colSums(ba.inc)
+rel.city<-n.city/nrow(ba.inc)
+rel.city<-round(rel.city, 4)*100
+
+int.mun<-c("2020-03-28","2020-04-04","2020-04-08","2020-04-14",
+           "2020-04-20","2020-04-25","2020-05-01","2020-05-07",
+           "2020-05-12","2020-05-14","2020-05-18","2020-05-22",
+           "2020-05-25","2020-05-28","2020-05-30","2020-06-03",
+           "2020-06-05")
+names(int.mun)<-c("05%","10%","15%","20%",
+                  "25%","30%","35%","40%",
+                  "45%","50%","55%","60%",
+                  "65%","70%","75%","80%",
+                  "85%")
+plot(as.Date(int.mun), rel.city[int.mun],
+     ylim=c(0,100), bty="l",
+     xlab="Data", ylab="Municípios afetados (%)")
+abline(lm(rel.city[int.mun]~as.Date(int.mun)))
+```
+
+
+Network data
+
+```{r}
+cz.dat<-read.csv2("D:/onedrive/covidbr/transport/agerba/centrality/cz.dat.csv")
+ba.cen<-read.csv2("D:/onedrive/covidbr/transport/agerba/centrality/new.dat.ba.csv")
+ba.mat<-read.csv2("D:/onedrive/covidbr/transport/agerba/matrix/mun.mat.csv")
+meso<-read.csv("D:/onedrive/covidbr/transport/agerba/meso.csv")
+
+ba.mat<-ba.mat[,-1]
+colnames(ba.mat)<-gsub("X", "", colnames(ba.mat))
+rownames(ba.mat)<-colnames(ba.mat)
+
+
+x1<-match(colnames(ba.mat), ba.shp$CD_GEOCMU)
+ba.shp<-ba.shp[x1,]
+coords<-rgeos::gCentroid(ba.shp, byid=T)@coords
+
+
+i.ba<-graph_from_adjacency_matrix(as.matrix(ba.mat),
+                                  mode="undirected", weighted =T, diag = F)
+members <- ba.cen$module
+central <- ba.cen$eingen.cen.dist
+
+
+# Convert to object suitable for networkD3
+karate_d3 <- igraph_to_networkD3(i.ba, group = members)
+
+# Create force directed network plot
+forceNetwork(Links = karate_d3$links, Nodes = karate_d3$nodes, 
+             Source = 'source', Target = 'target', 
+             NodeID = 'name', Group = 'group')
+```
+
+Decretos de suspensão do transporte intermunicipal
+```{r, dpi=600}
+decretos<-read.csv2("decretos.csv")
+n_start<-unique(decretos[,c("Decreto", "Data_inicio")])
+
+dec.net<-list()
+dec.net[[1]]<-i.ba
+i<-1
+for (i in 1:nrow(n_start))
+{
+  suspensos<-subset(decretos, Decreto==n_start[i,1], select="ibge")[,1]
+  id.suspen<-na.omit(match(suspensos, V(i.ba)$name))
+  linhas<-incident_edges(i.ba, v=id.suspen)
+  temp<-igraph::delete.edges(i.ba, unlist(linhas))
+  dec.net[[i+1]]<-temp
+}
+ 
+data1<-as.Date(n_start[,2], format="%d/%m/%Y")
+names(dec.net)<-c("Start", paste(data1))
+data2<-as.Date(int.mun)
+
+i<-2
+for (i in 1:length(data2))
+{
+  
+  join<-which.min(abs(data2[i]-data1))
+
+  int<-c(0, 0.2, 0.4, 0.6, 0.8, 1)
+  nod.cen<-4+log(findInterval(central/max(central), int), 3)
+  rel.edge<-0.5+log10(degree(dec.net[[join]])+1)/
+  max(log10(degree(dec.net[[join]])+1))
+  plot(dec.net[[join]], layout=coords,
+       main=names(int.mun)[i],
+  #edge.width=rel.edge, vertex.size=nod.cen,
+  edge.width=1, vertex.size=nod.cen,
+  vertex.label=NA, vertex.color=members)
+
+}
+
+
+```
+
+Animação
+
+```{r, dpi=600}
+library(animation)
+saveHTML(
+  {
+    par(mar = c(4, 4, 0.5, 0.5))
+    for (i in 1:length(dec.net))
+      {
+        int<-c(0, 0.2, 0.4, 0.6, 0.8, 1)
+  nod.cen<-4+log(findInterval(central/max(central), int), 3)
+        rel.edge<-0.5+log10(degree(dec.net[[i]])+1)/
+          max(log10(degree(dec.net[[1]])+1))
+        plot(dec.net[[i]], layout=coords,
+             #edge.width=rel.edge, vertex.size=nod.cen,
+             edge.width=1, vertex.size=nod.cen,
+             vertex.label=NA, vertex.color=members)
+      }
+  }
+  ,
+  img.name = "unif_plot",
+  imgdir = "unif_dir",
+  htmlfile = "random.html", 
+  autobrowse = FALSE,
+  title = "Demo of 20 uniform random numbers", 
+  description = "Rede de Transportes")
+
+
+
+```
+
+Municípios com covid respondendo a estrutura da rede
+
+```{r}
+m1.mat<-matrix(nrow=length(int.mun), ncol=4)
+
+i<-1
+e<-match(ba.cen$ibgecode, rownames(ba.inc))
+for (i in 1:length(int.mun))
+{
+  occ<-ba.inc[e,int.mun[i]]
+  m1<-glm(occ~log10(eingen.cen.dist+1), data=ba.cen, family="binomial")
+  m2<-glm(occ~roles-1, data=ba.cen, family="binomial")
+  m3<-glm(occ~inter.state-1, data=ba.cen, family="binomial")
+  m1.mat[i,1]<-summary(m1)[[12]][1,1]
+  m1.mat[i,2]<-summary(m1)[[12]][2,1]
+  m1.mat[i,3]<-summary(m1)[[12]][1,2]
+  m1.mat[i,4]<-summary(m1)[[12]][2,2]
+  print(1-m1$deviance/m1$null.deviance)
+
+}
+
+summary(m1)
+summary(m2)
+summary(m3)
+
+coef(m2) / (1 + coef(m2))
+coef(m3) / (1 + coef(m3))
+
+plot(log10(ba.cen$eingen.cen.dist+1), occ)
+X1_range <- seq(from=min(log10(ba.cen$eingen.cen.dist+1)),
+                to=max(log10(ba.cen$eingen.cen.dist+1)), by=.001)
+logit<-coef(m1)[1]+coef(m1)[2]*X1_range
+probs <- exp(logit)/(1 + exp(logit))
+plot(X1_range, probs, ylim=c(0,1), type="l")
+
+
+int<-as.Date(int.mun)
+int<-seq(5, 85, by=5)
+y1<-min(m1.mat[,2]-m1.mat[,4])
+y2<-max(m1.mat[,2]+m1.mat[,4])
+plot(int, m1.mat[,2], ylim=c(y1,y2),
+       col=rgb(0.4,0.4,0.8,0.6), pch=16, cex=1, bty="l",
+       xlab="Municípios afetados" , ylab="Coeficiente")
+  abline(h=0, lty=2, lwd=2)
+  arrows(int, m1.mat[,2]+m1.mat[,4],
+         int, m1.mat[,2]-m1.mat[,4],
+         code=3, angle=90, length=0.1)
+  points(int, m1.mat[,2], bg=rgb(0.4,0.4,0.8), pch=21, cex=1)
+
+```
+
+
+Modelo logístico
+
+```{r}
+r1.mat<-matrix(nrow=length(int.mun), ncol=4)
+
+i<-1
+e<-match(ba.cen$ibgecode, rownames(ba.fre))
+for (i in 1:length(int.mun))
+{
+  casos<-ba.fre[e,int.mun[i]]
+  r1<-lm(casos~log10(eingen.cen.dist+1), data=ba.cen)
+  r2<-lm(casos~roles-1, data=ba.cen)
+  r3<-lm(casos~inter.state-1, data=ba.cen)
+  r1.mat[i,1]<-summary(r1)[[4]][1,1]
+  r1.mat[i,2]<-summary(r1)[[4]][2,1]
+  r1.mat[i,3]<-summary(r1)[[4]][1,2]
+  r1.mat[i,4]<-summary(r1)[[4]][2,2]
+  print(summary(r1)$r.squared)
+}
+
+
+summary(r1)
+plot(log10(ba.cen$eingen.cen.dist+1), casos)
+abline(r1)
+
+
+int<-as.Date(int.mun)
+int<-seq(5, 85, by=5)
+y1<-min(r1.mat[,2]-r1.mat[,4])
+y2<-max(r1.mat[,2]+r1.mat[,4])
+plot(int, r1.mat[,2], ylim=c(y1,y2),
+       col=rgb(0.4,0.4,0.8,0.6), pch=16, cex=1, bty="l",
+       xlab="Municípios afetados" , ylab="Coeficiente")
+  abline(h=0, lty=2, lwd=2)
+  arrows(int, r1.mat[,2]+r1.mat[,4],
+         int, r1.mat[,2]-r1.mat[,4],
+         code=3, angle=90, length=0.1)
+  points(int, r1.mat[,2], bg=rgb(0.4,0.4,0.8), pch=21, cex=1)
+
+```
