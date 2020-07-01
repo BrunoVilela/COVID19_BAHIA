@@ -120,7 +120,7 @@ g1 <- mun_covid %>%
     city = fct_reorder(city, -confirmed)) %>% 
   top_n(30, confirmed) %>% 
   ggplot(aes(x = city, y = confirmed)) +
-  geom_col() +
+  geom_col(color='black', fill=alpha("royalblue4", 0.75)) +
   theme(axis.text.x = element_text(angle = 90)) +
   scale_y_log10() +
   xlab("") +
@@ -130,6 +130,7 @@ ggplotly(g1)
 ```
 </p>
 </details>
+
 
 ### As 30 cidades mais afetadas na Bahia em número total
 ```{r, echo=FALSE}
@@ -145,12 +146,12 @@ g2 <- mun_covid %>%
     city = fct_reorder(city, -confirmed_per_100k_inhabitants)) %>% 
   top_n(30, confirmed_per_100k_inhabitants) %>% 
   ggplot(aes(x = city, y = confirmed_per_100k_inhabitants)) +
-  geom_col() +
+  geom_col(color='black', fill=alpha("steelblue4", 0.75)) +
   theme(axis.text.x = element_text(angle = 90)) +
   xlab("") +
   ylab("Casos de COVID-19 por 100k hab") +
   ggtitle("")
-ggplotly(g2)
+g2
 ```
 </p>
 </details>
@@ -164,7 +165,8 @@ ggplotly(g2)
 <details><summary>Mostre o código</summary>
 <p>
 ```{r, message = FALSE, warning=FALSE}
-ba_map <- readOGR("Data/bahia.shp")
+#ba_map <- readOGR("Data/bahia.shp") #ibge BA shapefile
+ba_map <- readOGR("Data/sim_bahia.shp") #simplified shapefile
 names(ba_map)[2] <- "ibge"
 ba_map@data[, 2] <- as.numeric(as.character(ba_map@data[, 2]))
 ba_map@data <- left_join(ba_map@data, mun_covid,
@@ -239,7 +241,7 @@ output$phonePlot3 = renderLeaflet({
   # Final Map
   leaflet(ba_map) %>%
     addTiles()  %>%
-    # setView( lat=-46, lng=-11 , zoom=3) %>%
+    #setView( lat=-46, lng=-11 , zoom=3) %>%
     addPolygons(
       fillColor = ~ mypalette(y),
       stroke = TRUE,
