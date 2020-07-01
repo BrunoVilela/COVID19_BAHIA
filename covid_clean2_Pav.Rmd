@@ -1,0 +1,752 @@
+### ### Coloquei comentário no texto perguntando coisas e indicando coisas que mudei. Comecei eles com ### ### para ficar mais fácil de localizar. - Pavel
+
+---
+title: "Explorando fatores que afetam a transmissão de COVID-19 na Bahia"
+author: "Grupo de Estudos em Ecologia Espacial - UFBA"
+date: "4/17/2020"
+runtime: shiny
+output:
+  html_document:
+    toc: true
+    theme: journal
+    df_print: paged
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+# Autores
+Essa pesquisa foi realizado pelo grupo de estudos em ecologia espacial da UFBA, incluindo os seguintes pesquisadores: 
+
+- Dr. Anderson Medina (Pós-doc IBIO-UFBA) 
+- Dr. Bruno Vilela (Professor IBIO-UFBA)
+- Daniel Gonçalves (Mestrando IBIO-UFBA)
+- Dr. Gilson Carvalho (Professor ICS-UFBA)
+- Dr. Ricardo Dobrovolski (Professor IBIO-UFBA)
+- Dr. Pavel Dodonov (Professor IBIO-UFBA)
+
+# Apresentação
+
+Esse documento traz os resultados e códigos utilizados nas análises dos fatores que contribuem para a expansão dos casos de Covid-19 no estado da Bahia.
+
+Especificamente buscamos responder as seguintes perguntas nesse documento:
+
+Inicialmente apresentamos algumas análises descritivas do estágio atual de Covid-19 na Bahia, com base em dados fornecidos pelo portal https://brasil.io/dataset/covid19/caso. Os dados foram baixados com o pacote coronabr.
+
+A seguir buscamos responder as seguintes perguntas:
+
+1) Como a taxa de crescimento tem variado ao longo do tempo na Bahia;
+
+2) Quais fatores estão correlacionados à ocorrência de COVID-19 em um determinando município;
+
+3) Quais fatores estão correlacionados ao número de casos de COVID-19 a cada 100 mil habitantes em um determinando município;
+
+4) Quais fatores estão correlacionados ao número de dias até o primeiro, décimo e centésimo caso de COVID-19 em um determinando município.
+
+
+
+# Síntese dos principais resultados
+
+1) Apesar do número de casos terem subido, a taxa de crescimento do vírus na Bahia e em Salvador vem diminuindo e está aparentemente estabilizada no momento.
+
+2) A presença de COVID-19 em um município parece ser influenciada pela presença de uma população grande e urbana. Municípios que estão próximos aos grandes aeroportos do estado, localizados em Salvador e Ilheus, também têm maior vulnerabilidade. É interessante notar que uma maior preciptação parece estar ligada à presença do vírus; é possível que isso se deva ao grande número de casos no sul da Bahia (onde a precipitação é maior) devido a fatores que não avaliamos aqui.
+
+3) Em cidades que já tem a COVID-19, o número de casos por 100 mil habitantes parece aumentar principalmente com a proximidade com grandes aeroportos e diminui em cidades com populações mais rurais e com maior proporção de profissionais com carteira assinada. O número de profissionais de saúde parece estar positivamente correlacionado com o número de casos por 100 mil habitantes, indicando um potencial vies causado pela busca e disponibilidade de assitência médica. Os fatores ambientais também parecem ter um efeito sobre essa variável, indicando que o número de casos aumenta com maior precipitação e menor temperatura. É importante ressaltar que a centralidade na rede rodoviária parece ter um efeito negativo sobre o taxa de casos por 100 mil habitantes, o que seria contraintuito. Esse resultado pode indicar que algumas medidas tomadas nas principais cidades do estado (com maior conexão) podem estar correlacionada com a influência negativa encontrada para esse fator.
+
+4) O número de dias até o primeiro e até o décimo caso é principalmente afetado pelo tamanho da população. A proporção de população rural parece diminuir o número de dias até a primeira contaminação também.
+
+
+# Antes de rodar as análises
+
+A versão do R utilizada foi:
+```{r}
+R.version
+```
+
+Se for seguir o código para recriar as análises, antes de inciar, carregue e instale os seguintes pacotes.
+```{r pacotes, message=FALSE}
+library(shiny)
+library(coronabr) # pode baixar aqui: https://github.com/liibre/coronabr
+library(tidyverse)
+library(car)
+library(randomForest)
+library(rgdal) # load map
+library(sp) # plot maps
+library(plotly)
+library(leaflet)
+library(RColorBrewer)
+library(MuMIn) # multi-model inference
+```
+
+O código também está disponível em .Rmd no seguinte link: https://github.com/BrunoVilela/COVID19_BAHIA/blob/master/covid_clean.Rmd
+
+
+# Download dos dados de COVID-19 para a Bahia
+
+Com o código abaixo podemos baixar os dados para todos os municipios Bahia.
+Para saber mais sobre as fontes do dados acesse o seguinte link: https://github.com/liibre/coronabr. 
+
+```{r baixar os dados}
+foo <- get_corona_br(uf = "BA") ### ### Separei aqui em duas linhas porque tava dando muito erro.
+covid0 <- as_tibble(foo)
+```
+
+Pequenos ajustes na tabela:
+```{r ajustes}
+covid <- covid0 %>%
+  filter(place_type == "city") %>%
+  mutate(city = factor(city, levels = unique(city)))
+```
+
+Dados por municipio:
+```{r}
+mun_covid <- covid %>%
+  filter(date == date[1]) %>%
+  mutate(afetados = ifelse(confirmed > 0, 1, 0))
+```
+
+# Fatores que afetam a ocorrência de COVID-19
+
+Em nossa primeira pergunta buscamos identificar quais são os fatores que afetam a ocorrência de COVID-19 em um determinando município. Buscamos fazer isso correlacionando diversos fatores sociais, econômicos e ambientais a duas variáveis respostas: uma binária, (1) separando municípios em infectados ou não infectados; e duas contínuas, (2) usando o número total de casos até o momento por 100 mil habitantes; e (3) identificando quanto tempo levou para o município ter 100 infecções por COVID-19.
+
+### ### Eu acho que nessa etapa da pandemia não faz mas muito sentido trabalhar com presença-ausência. Em 30 de junho havia 386 municípios afetados e apenas 30 não afetados...
+
+## Dados dos municípios
+
+No primeiro passo, carregamos os dados socio-economicos obtidos do [IBGE](https://sidra.ibge.gov.br/home/pimpfbr/brasil), os dados de transporte intermunicipais obtidos na [Agerba](http://www.agerba.ba.gov.br/transportes/rodoviario/linhas) e dados do [SUS](https://datasus.saude.gov.br/informacoes-de-saude-tabnet/).
+Todos podem ser obtidos aqui: https://github.com/BrunoVilela/COVID19_BAHIA/tree/master/Data
+```{r ibge, message = FALSE, warning=FALSE}
+ibge <- read_csv2(file("Data/new_ibge.csv", encoding = "UTF-8")) %>%
+  separate(cidade, c("Cidade", "Estado"), sep = "\\(") %>%
+  mutate(Estado = str_remove(Estado, "\\)")) %>%
+  filter(Estado == "BA") %>%
+  select(-X1)
+
+federal <- read_csv2("Data/federal_w_codes.csv") %>% select(-X1)
+centralidade <- read_csv2("Data/new.dat.ba.csv") %>% select(-X1)
+clima <- read_csv2("Data/climatic.br.csv") %>%
+  mutate(
+    precTotal = rowSums(.[3:7]),
+    tmean = apply(.[8:17], 1, mean)
+  ) %>%
+  select(-X1)
+meso <- read_csv("Data/meso.csv")
+colnames(meso)[1] <- "mesoregiao"
+aero <- read_csv2("Data/new.main.air.ba.csv") %>% select(-X1)
+sus <- read_csv2("Data/new.data.sus.csv") %>% select(-X1)
+dec <- read_csv("Data/decretos.csv") %>% 
+  select(ibge, rod_fechada)
+filbin<-read_csv2("Data/binary.csv")
+filcas<-read_csv2("Data/quantitative.csv")
+
+colnames(filbin)[2:ncol(filbin)]<-paste0("filbin", 1:(ncol(filbin)-1))
+colnames(filcas)[2:ncol(filcas)]<-paste0("filcas", 1:(ncol(filcas)-1))
+```
+
+Depois de carregados, juntamos as tabelas com todas essas informações.
+```{r juntar}
+munis <- left_join(ibge, centralidade, by = c("cod_ibge" = "ibgecode")) %>%
+  left_join(federal, by = c("cod_ibge" = "ibge")) %>%
+  left_join(mun_covid, by = c("cod_ibge" = "city_ibge_code")) %>%
+  left_join(clima, by = c("cod_ibge" = "ibge")) %>%
+  left_join(meso, by = c("cod_ibge" = "code")) %>%
+  left_join(aero, by = c("cod_ibge" = "ibge")) %>%
+  left_join(sus, by = c("cod_ibge" = "ibge")) %>% 
+  left_join(dec, by = c("cod_ibge" = "ibge")) %>% 
+  left_join(filbin, by = c("cod_ibge" = "ibge")) %>% 
+  left_join(filcas, by = c("cod_ibge" = "ibge")) %>% 
+  
+  mutate(
+    dens.road = ifelse(is.na(dens.road), 0, dens.road),
+    afetados = ifelse(is.na(afetados), 0, afetados),
+    airport = ifelse(is.na(airport), "NO", airport),
+    confirmed = ifelse(is.na(confirmed), 0, confirmed),
+    rod_fechada = ifelse(is.na(rod_fechada), 0, rod_fechada),
+    leitos = ifelse(is.na(leitos), 0, leitos),
+    leitos = ifelse(is.na(leitos), 0, leitos),
+    profissionais.saude = ifelse(is.na(profissionais.saude), 0, profissionais.saude/total.pop),
+    confirmed_per_100k_inhabitants = ifelse(is.na(confirmed_per_100k_inhabitants), 0,
+      confirmed_per_100k_inhabitants
+    ),
+    tam_pop_urb = total.pop * (1 - perc.rural)
+  )
+```
+
+Ao final obtemos a seguinte tabela:
+```{r}
+munis
+```
+
+## Infectados ou não infectados
+
+Tendo como base os dados de COVID-19 e os fatores econômicos, sociais e ambientais, podemos explorar quais desses fatores afetam a COVID-19 no estado da Bahia. Iniciamos nossa abordagem explorando quais desses fatores explicam a ocorrência de casos COVID-19 em certos municípios enquanto outros não possuem casos. Para tanto aplicamos um modelo logístico. Como muitos dos fatores estão correlacionados, escolhemos as variáveis mais importantes para responder a nossa pergunta. Escolhemos as seguintes variáveis explanatórias: presença de um aeroporto nacional (considerado como sim para os municípios de Ilhéus, Porto Seguro, Teixeira de Freitas, Una, Vitória da Conquista, Barreiras, Lençóis, Paulo Afonso, Salvador e Valença), a porcentagem da população rural, uma medida de centralidade representando a distância desse município até outras, a escolaridade, rodovias fechadas por decretos, distância até aeroporto interancional (considerando os aeroportos de Ilhéus e Salvador, temperatura média e...
+
+### ### Conferem se é isso mesmo? Eu não entendi ou não lembro o que são algumas delas, precisaria completar.
+
+### ### Sobre os decretos: eu não entendi bem o que o número representa... Mas talvez faça mais sentido trabalhar com o tempo desde o primeiro fechamento da rodovia? No caso, se não teve fechamento colocamos 0. Se teve, colocamos o número de dias desde que foi fechada.
+
+```{r data_fechamento_rodovia}
+### ### Sobre o aeroporto: acho que faz sentido incluir Lauro de Freitas, porque o aeroporto de Salvador fica mais perto de lá. O aeroporto de Una é um aeroporto privado em um resort, e eu suspeito que tenha bem pouca interação com o município de Una.
+
+reg_log <- glm(
+  afetados ~
+    nat.airport + log(total.pop) + perc.rural +
+    log(eingen.cen.dist) + rod_fechada + school.year +
+    perc.with.wages + dist.min.int +
+    profissionais.saude + log(precTotal) + tmean +
+    filcas59 + dorm_3_rel,
+  data = munis,
+  family = binomial
+)
+```
+
+Checamos a inflação do modelo usando o valor de inflação de cada variável (VIF). Nosso objetivo é manter o valor de VIF abaixo de 2, mas como os dados são atualizados automaticamente os valores de VIF podem oscilar e ultrapassar um pouco o limiar. 
+```{r}
+vif(reg_log)
+```
+
+Para evitar possíveis problemas causados por desvios dos pressupostos do modelo logístico (homogeneidade da variância), recalculamos os valores de p por monte carlo, aleatorizando a variável "afetados".
+
+### ### Isso dá a significância pro modelo geral, mas não pra cada fator, né? Pra calcular a significância pra cada fator não teríamos que aleaotoriezar este fator, mantendo os outros fixos? 
+
+```{r sim, warning=FALSE}
+reg_log_orig <- reg_log
+resu <- summary(reg_log)
+rept <- 1000
+obs_z <- summary(reg_log)$coefficients[, 3]
+obs <- coefficients(reg_log)
+zs <- coefs <- matrix(ncol = length(obs), nrow = rept)
+colnames(zs) <- colnames(coefs) <- names(obs)
+for (i in 1:rept) {
+  munis$rnd_afetados <- sample(munis$afetados)
+  reg_log <- glm(rnd_afetados ~ 
+                   nat.airport + log(total.pop) + perc.rural +
+                   log(eingen.cen.dist) + + rod_fechada +school.year +
+                   perc.with.wages + dist.min.int +
+                   profissionais.saude+log(precTotal) + tmean +
+                   filcas59 + dorm_3_rel,
+            data = munis,
+            family = binomial)
+  zs[i, ] <- summary(reg_log)$coefficients[, 3]
+  coefs[i, ] <- coefficients(reg_log)
+}
+
+### ### Não sei se é interessante incluir isso no script online porque o processamento pode demorar... Talvez colocar apenas o resultado?
+
+for (j in 1:length(obs)) {
+  maior <- (sum(obs[j] >= coefs[, j]) + 1 ) / (rept + 1) * 2
+  menor <- (sum(obs[j] <= coefs[, j]) + 1) / (rept + 1) * 2
+  resu$coefficients[j, 4] <- ifelse(maior > menor, menor, maior)
+}
+```
+
+Aqui os resultados:
+```{r}
+resu
+```
+### ### Adicionei essa parte:
+
+Comparando com os resultados obtidos sem usar permutações:
+
+```{r}
+summary(reg_log_orig)
+```
+
+### ### Eu achei um pouco discrepantes demais. Acho que o certo mesmo seria fazer a aleatorização para cada variável explanatória separadamenteo. 
+
+### Gráficos
+
+```{r}
+g <- munis %>% 
+  mutate(afetados = ifelse(afetados == 1, "Sim", "Não"),
+         `log(total.pop)` = log(total.pop), 
+         `log(eingen.cen.dist)` = log(eingen.cen.dist), 
+         `log(precTotal)` = log(precTotal)) %>%
+  select(afetados, `log(total.pop)`, perc.rural,
+              `log(eingen.cen.dist)`, school.year,
+              perc.with.wages, dist.min.int, profissionais.saude,
+              `log(precTotal)`, tmean,
+              rod_fechada, dorm_3_rel, filcas59) %>% 
+  gather("Variavel", "Valor", -afetados) %>% 
+ # plot
+  ggplot(aes(x = afetados ,
+           y = Valor, 
+           fill = afetados)) +
+  geom_violin(width = 1) +
+  geom_boxplot(width=0.1, color="black", alpha = .2) +
+  theme(legend.position = "none") + 
+  xlab("Município afetado") +
+  ylab("") +
+  facet_wrap(Variavel~., scales = "free_y")
+
+g
+```
+
+### ### Eu sou a favor de uma seleção de modelos aqui. Eu normalmente uso p-valores, mas para automatizar é mais fácil usar AIC. Sendo assim...
+
+Como este modelo parece ter mais variáveis do que desejado, realizamos uma seleção de modelos passo a passo, partindo do modelo completo e simplificando ele, com base no Critério de Informação de Akaike.
+
+```{r reg_log_stepwise}
+
+munis2 <- filter(munis, !is.na(nat.airport) & !is.na(total.pop) & !is.na(perc.rural) &
+                   !is.na(eingen.cen.dist) & !is.na(rod_fechada) & !is.na(school.year) &
+                   !is.na(perc.with.wages) & !is.na(dist.min.int) &
+                   !is.na(profissionais.saude) & !is.na(precTotal) & !is.na(tmean) &
+                   !is.na(filcas59) & !is.na(dorm_3_rel))
+
+# Removemos os municípios para os quais não havia dados de alguma das variáveis. Para verificar quais são esses:
+munis_removed <- filter(munis, is.na(nat.airport) | is.na(total.pop) | is.na(perc.rural) |
+                   is.na(eingen.cen.dist) | is.na(rod_fechada) | is.na(school.year) |
+                   is.na(perc.with.wages) | is.na(dist.min.int) |
+                   is.na(profissionais.saude) | is.na(precTotal) | is.na(tmean) |
+                   is.na(filcas59) | is.na(dorm_3_rel))
+munis_removed$Cidade
+
+nrow(munis_removed) + nrow(munis2) == nrow(munis) # Conferindo se não deu nada errado no processo
+
+# Reajustando o modelo logístico sem os municípios com dados ausentes e aplicando a função step:
+
+reg_log2  <- glm(rnd_afetados ~ 
+                   nat.airport + log(total.pop) + perc.rural +
+                   log(eingen.cen.dist) + + rod_fechada +school.year +
+                   perc.with.wages + dist.min.int +
+                   profissionais.saude+log(precTotal) + tmean +
+                   filcas59 + dorm_3_rel,
+            data = munis2,
+            family = binomial, na.action=na.fail)
+
+reg_log_step <- step(reg_log2, dir="backward")
+summary(reg_log_step) 
+```
+
+De acordo com esta análise, a probabilidade da ocorrência de Covid-19 (em 30 de junho de 2020) aumenta com o número de habitantes no município e diminui com a precipitação e a temperatura, assim como com a distância até aeroportos e outros municípios (embora estes últimos efeitos não foram estatisticamente significativos).
+
+Esta análise pode gerar resultados espúrios devido ao possivelmente grande número de modelos analisados. Assim, usamos uma abordagem de inferência a partir de modelos múltiplos para determinar a importância relativa das variáveis. O cálculo é baseado no ajuste de todos os modelos possíveis com as variáveis selecionadas, o cálculo do AIC de cada modelo, e a soma dos pesos de Akaike calculados para os modelos contendo uma dada variáveis. A prática de "dredging", ajuste de todos os modelos possíveis e a escolha de um, não é recomendada, mas seu uso para calcular importância relativa de variáveis previamente escolhidas pelo seu significado biológico é válido.
+
+```{r Multi-model inference}
+reg_log_dredge <- dredge(reg_log2)
+reg_log_importance <- importance(reg_log_dredge)
+attr(reg_log_importance, "n.models") <- NULL
+reg_log_importance
+```
+
+De acordo com esta análise, a variável mais importante é a precipitação total, seguida de temperatura, escolaridade, população total, distância até aeroportos, e distância até outros municípios. No entanto, é possível que o efeito da precipitação na verdade se deve à localização geográfica dos municípios afetados, grande parte dos quais se localiza no litoral e especialmente no litoral sul da Bahia, áreas com maior precipitação. Se a expansão da Covid-19 na Bahia começou a partir destes lugares, é provável que o efeito que detectamos para a precipitação representa a expansão a partir de lugares com determinadas condições climáticas.
+
+## Fatores que afetam o número de casos
+
+No próximo passo, investigamos os fatores que afetam o número de casos confirmados para cada 100 mil habitantes.
+```{r cor N}
+
+munis_conf <- filter(munis, confirmed > 0) # Objeto apenas com municípios com casos de Covid-0
+
+reg_N <- lm(
+   log(confirmed_per_100k_inhabitants + 1) ~
+    nat.airport +  perc.rural +
+    log(eingen.cen.dist) +  rod_fechada +
+    perc.with.wages + dist.min.int + profissionais.saude +
+    log(precTotal) + tmean + filcas59 + dorm_3_rel,
+  data = munis_conf
+)
+```
+Checamos a inflação do modelo usando o valor de inflação de cada variável (VIF):
+```{r}
+vif(reg_N)
+```
+
+Conferindo as premissas do modelo:
+```{r}
+par(mfrow=c(2,2))
+plot(reg_N)
+shapiro.test(resid(reg_N))
+```
+Não parece haver problemas de heteroscedasticidade ou falta de normalidade (em 30 de junho de 2020).
+
+
+Recalculamos abaixo os valores de p usando uma simulação da Monte Carlo, onde o número de casos foi aleatorizado e foi recalculada o número de casos por 100k habitantes.
+```{r}
+reg_N_orig <- reg_N
+resu <- summary(reg_N)
+rept <- 1000
+obs <- coef(reg_N)
+coefs <- matrix(ncol = length(obs), nrow = rept)
+colnames(coefs) <- names(obs)
+for (i in 1:rept) {
+ munis$rnd_cases <- (sample(munis$confirmed) / munis$total.pop) * 1000
+  while(sum(munis$nat.airport[munis$rnd_cases > 0] == "YES") < 2) {
+    munis$rnd_cases <- (sample(munis$confirmed) / munis$total.pop) * 1000
+  }
+ reg_N <- lm(
+   log(rnd_cases + 1) ~
+    nat.airport +  perc.rural +
+    log(eingen.cen.dist) +  rod_fechada +
+    perc.with.wages + dist.min.int + profissionais.saude +
+    log(precTotal) + tmean + filcas59 + dorm_3_rel,
+   data = filter(munis, rnd_cases > 0)
+ )
+ coefs[i,] <- coef(reg_N)
+}
+
+for (j in 1:length(obs)) {
+  maior <- (sum(obs[j] >= coefs[, j]) + 1 ) / (rept + 1) * 2
+  menor <- (sum(obs[j] <= coefs[, j]) + 1) / (rept + 1) * 2
+  resu$coefficients[j, 4] <- ifelse(maior > menor, menor, maior)
+}
+```
+
+Aqui apresentamos os resultados por permutação:
+```{r}
+resu
+```
+
+E os resultados sem permutação:
+```{r}
+summary(reg_N_orig)
+```
+
+### Gráficos
+
+```{r}
+g <- munis %>% filter(confirmed > 0) %>% 
+  mutate(`log(total.pop)` = log(total.pop), 
+         `log(eingen.cen.dist)` = log(eingen.cen.dist), 
+         `log(precTotal)` = log(precTotal)) %>%
+  select(confirmed_per_100k_inhabitants, perc.rural,
+              `log(eingen.cen.dist)`, rod_fechada,
+              perc.with.wages, dist.min.int, profissionais.saude,
+              `log(precTotal)`, tmean, filcas59, dorm_3_rel) %>% 
+  gather("Variavel", "Valor", -confirmed_per_100k_inhabitants) %>% 
+ # plot
+  ggplot(aes(y = confirmed_per_100k_inhabitants,
+           x = Valor)) +
+     scale_y_log10() +
+  geom_point() +
+  ylab("Número de casos por 100 mil habitantes") +
+  xlab("") +
+  facet_wrap(Variavel ~ ., scales = "free_x")
+
+ggplotly(g)
+```
+
+Repetindo a seleção de modelos e a inferência por modelos múltiplos, como realizado acima:
+
+```{r step+multimodel_N}
+
+munis_conf2 <- filter(munis_conf, 
+    !is.na(nat.airport) &  !is.na(perc.rural) &
+    !is.na(eingen.cen.dist) &  !is.na(rod_fechada) &
+    !is.na(perc.with.wages) & !is.na(dist.min.int) & !is.na(profissionais.saude) &
+    !is.na(precTotal) & !is.na(tmean) & !is.na(filcas59) & !is.na(dorm_3_rel))
+
+reg_N <- lm(
+   log(confirmed_per_100k_inhabitants + 1) ~
+    nat.airport +  perc.rural +
+    log(eingen.cen.dist) +  rod_fechada +
+    perc.with.wages + dist.min.int + profissionais.saude +
+    log(precTotal) + tmean + filcas59 + dorm_3_rel,
+  data = munis_conf2, na.action=na.fail
+)
+
+reg_N_step <- step(reg_N, dir="backward")
+reg_N_dredge <- dredge(reg_N)
+reg_N_importance <- importance(reg_N_dredge)
+
+summary(reg_N_step)
+reg_N_importance
+
+```
+
+De acordo com esta análise (30 de junho de 2020), as variáveis mais importantes para determinar o número de casos são: o fechamento de rodovias, a temperatura, a distância até aeroporto internacional, e a porcentagem de população rural. De acordo com o resultado da seleção de modelos passo-a-passo, o número de casos aumenta com a distância de centros urbanos, precipitação, temperatura, filcas59 e, contra-intuitivamente, com o fechamento das rodovias. O efeito das rodoviais pode se dever ao seu fechamento depois que já havia um número significativo de casos na região, e representaria a tendência a fechar rodovias por causa da covid-19 e não o seu efeito sobre o número de casos. O número de casos diminui com a porcentagem da população rural (pode repesentar menor propagação nesta população ou, talvez mais provável, menor testagem nela) e, contra-intuitivamente, com a distância a centro urbanos (eingen.cent.dist).
+
+
+## Dias até N casos
+Na terceira linha de investigação, verificamos quais fatores afetam o número de dias até chegar ao caso, 1, 2, 3... N. Para tanto, usamos um modelo de linear com os mesmos fatores incluidos nos testes anteriores. 
+
+### Dias até o primeiro caso
+Antes de começar calculamos o número de dias até o primeiro caso por cidade, contados a paritir do dia 0 para o estado (ou seja, o primeiro caso conta como 1 dia).
+
+```{r}
+cidades <- na.omit(unique(covid$city_ibge_code))
+n <- length(cidades)
+baseline <- as.Date.character('2020-03-06')
+dia1 <- numeric(n)
+for (i in 1:n) {
+  covid_i <- covid %>%  
+    filter(city_ibge_code == cidades[i], confirmed > 0) 
+  dia1[i] <- as.numeric(min(covid_i$date) - baseline)
+}
+rem <- is.infinite(dia1)
+dias <- tibble(cod_ibge = cidades, dia1)[!rem, ]
+munis <- munis %>% left_join(dias)
+munis$dia1 <- munis$dia1+1
+```
+
+Modelo - como é esperado que o tempo até um evento siga uma distribuição exponencial, que pode ser generalizada para uma distribuição Gamma, usamos GLM com distribuição Gamma para esta análise:
+```{r}
+
+munis_conf <- filter(munis, confirmed>0)
+reg_dia1 <- glm(
+  dia1 ~
+    nat.airport + perc.rural +
+    log(eingen.cen.dist) + 
+    perc.with.wages + dist.min.int + profissionais.saude +
+    log(precTotal) + tmean + dorm_3_rel +filcas59,
+  data = munis_conf, family=Gamma
+  )
+```
+
+
+Verificando o efeito da colinearidade no modelo.
+```{r}
+vif(reg_dia1)
+```
+
+Avaliando as premissas - especialmente heteroscedasticidade
+
+```{r}
+par(mfrow=c(2,2))
+plot(reg_dia1)
+```
+
+Não parece haver outliers ou padrões residuais.
+
+Recalculamos abaixo os valores de p usando uma simulação da Monte Carlo, onde o numero de casos foi aleatorizado e foi recalculada o número de casos por 100k habitantes.
+```{r}
+reg_dia1_orig <- reg_dia1
+resu <- summary(reg_dia1)
+rept <- 1000
+obs <- coef(reg_dia1)
+coefs <- matrix(ncol = length(obs), nrow = rept)
+colnames(coefs) <- names(obs)
+for (i in 1:rept) {
+  munis_i <- munis_conf
+ munis_i$rnd_cases <- sample(munis_i$dia1)
+  # while(sum(munis$airport[munis_i$rnd_cases > 0] == "YES") < 2) {
+  #   munis_i$rnd_cases <- sample(munis_i$dia1)
+  # }
+ reg_dia1 <- glm(
+   rnd_cases ~
+    nat.airport + perc.rural +
+    log(eingen.cen.dist) +
+    perc.with.wages + dist.min.int + profissionais.saude +
+    log(precTotal) + tmean + dorm_3_rel +filcas59,
+   data = munis_i, family=Gamma)
+ coefs[i,] <- coef(reg_dia1)
+}
+
+for (j in 1:length(obs)) {
+  maior <- (sum(obs[j] >= coefs[, j]) + 1 ) / (rept + 1) * 2
+  menor <- (sum(obs[j] <= coefs[, j]) + 1) / (rept + 1) * 2
+  resu$coefficients[j, 4] <- ifelse(maior > menor, menor, maior)
+}
+```
+
+Aqui os resultados:
+```{r}
+resu
+```
+
+Resultados sem permutação:
+```{r}
+summary(reg_dia1_orig)
+```
+
+### ### Os resultados com e sem permutação estão muito diferentes...
+
+
+#### Gráficos
+```{r}
+g <- munis %>% filter(confirmed > 0) %>% 
+  mutate(`log(total.pop)` = log(total.pop), 
+         `log(eingen.cen.dist)` = log(eingen.cen.dist), 
+         `log(precTotal)` = log(precTotal)) %>%
+  select(dia1, perc.rural,
+              `log(eingen.cen.dist)`,
+              perc.with.wages, dist.min.int, profissionais.saude,
+              `log(precTotal)`, tmean , dorm_3_rel, filcas59) %>% 
+  gather("Variavel", "Valor", -dia1) %>% 
+ # plot
+  ggplot(aes(y = dia1,
+           x = Valor)) +
+     scale_y_log10() +
+  geom_point() +
+  ylab("Dias até o primeiro caso") +
+  xlab("") +
+  facet_wrap(Variavel ~ ., scales = "free_x")
+
+ggplotly(g)
+```
+
+Usando seleção de modelos, como acima:
+
+```{r step+multimodel_N}
+
+munis_conf2 <- filter(munis_conf, !is.na(nat.airport) & !is.na(perc.rural) &
+    !is.na(eingen.cen.dist) &
+    !is.na(perc.with.wages) & !is.na(dist.min.int) & !is.na(profissionais.saude) &
+    !is.na(precTotal) & !is.na(tmean) & !is.na(dorm_3_rel) & !is.na(filcas59))
+
+
+reg_dia1 <- glm(
+  dia1 ~
+    nat.airport + perc.rural +
+    log(eingen.cen.dist) + 
+    perc.with.wages + dist.min.int + profissionais.saude +
+    log(precTotal) + tmean + dorm_3_rel +filcas59,
+  data = munis_conf2, family=Gamma, na.action=na.fail
+  )
+
+reg_dia1_step <- step(reg_dia1, dir="backward")
+reg_dia1_dredge <- dredge(reg_dia1)
+reg_dia1_importance <- importance(reg_dia1_dredge)
+
+reg_dia1_importance
+summary(reg_dia1_step)
+
+```
+De acordo com essa análise, as variáveis mais importantes determinando o número de dias até o primeiro caso são: porcentagem da população rural, temperatura, filcas59, presença de aeroporto nacional, distância a centros, e em menor grau a precipitação. Para interpretar os resultados do modelo é importante levar em conta que o GLM com distribuição Gamma usa uma função inversa de ligação - assim, coeficientes positivos representam efeitos negativos e vice-versa. Sendo assim, o número de dias até o primeiro caso foi maior em municípios com maior população rural e menor em municípios com aeroporto, mais próximos de centros, com maior filcas59, maior temperatura e maior precipitação. É provável que o efeito de precipitação e temperatura se deva ao clima da região do litoral, mais afetada.
+
+
+### Dias até o décimo caso
+Antes de começar calculamos o número de dias até o décimo caso por cidade desde o dia 0.
+```{r, warning=FALSE}
+cidades <- na.omit(unique(covid$city_ibge_code))
+n <- length(cidades)
+baseline <- as.Date.character('2020-03-06')
+dia10 <- numeric(n)
+for (i in 1:n) {
+  covid_i <- covid %>%  
+    filter(city_ibge_code == cidades[i], confirmed > 9) 
+  dia10[i] <- as.numeric(min(covid_i$date) - baseline)
+}
+rem <- is.infinite(dia10)
+dias <- tibble(cod_ibge = cidades, dia10)[!rem, ]
+munis <- munis %>% left_join(dias)
+munis$dia10 <- munis$dia10+1
+# Removendo dados ausentes
+munis_dia10 <- munis %>% filter(!is.na(dia10) & !is.infinite(dia10))
+```
+
+Temos tamanho amostral suficiente para usar o mesmo modelo que acima. Ajustamos novamente com distribuição Gamma:
+
+```{r}
+
+reg_dia10 <- glm(
+  dia10 ~
+    nat.airport + perc.rural +
+    log(eingen.cen.dist) + 
+    perc.with.wages + dist.min.int + profissionais.saude +
+    log(precTotal) + tmean + dorm_3_rel +filcas59,
+  data = munis_dia10, family=Gamma
+  )
+```
+
+
+Verificando o efeito da colinearidade no modelo.
+```{r}
+vif(reg_dia10)
+```
+Avaliando as premissas - especialmente heteroscedasticidade
+
+```{r}
+par(mfrow=c(2,2))
+plot(reg_dia10)
+```
+
+Parece haver heteroscedasticidade - os resultados devem ser avaliados com mais cuidado.
+
+Recalculamos abaixo os valores de p usando uma simulação da Monte Carlo, onde o número de casos foi aleatorizado e foi recalculada o número de casos por 100k habitantes.
+```{r}
+reg_dia10_orig <- reg_dia10
+resu <- summary(reg_dia10)
+rept <- 1000
+obs <- coef(reg_dia10)
+coefs <- matrix(ncol = length(obs), nrow = rept)
+colnames(coefs) <- names(obs)
+for (i in 1:rept) {
+  munis_i <-  munis_dia10
+ munis_i$rnd_cases <- sample(munis_i$dia10)
+  # while(sum(munis$airport[munis_i$rnd_cases > 0] == "YES") < 2) {
+  #   munis_i$rnd_cases <- sample(munis_i$dia10)
+  # }
+ reg_dia10 <- glm(
+  rnd_cases ~
+    nat.airport + perc.rural +
+    log(eingen.cen.dist) + 
+    perc.with.wages + dist.min.int + profissionais.saude +
+    log(precTotal) + tmean + dorm_3_rel +filcas59,
+  data = munis_i, family=Gamma)
+ coefs[i,] <- coef(reg_dia10)
+}
+
+for (j in 1:length(obs)) {
+  maior <- (sum(obs[j] >= coefs[, j]) + 1 ) / (rept + 1) * 2
+  menor <- (sum(obs[j] <= coefs[, j]) + 1) / (rept + 1) * 2
+  resu$coefficients[j, 4] <- ifelse(maior > menor, menor, maior)
+}
+```
+
+Aqui os resultados:
+```{r}
+resu
+```
+Sem as permutações:
+
+```{r}
+summary(reg_dia10_orig)
+```
+
+#### Gráficos
+
+```{r}
+g <- munis %>% filter(confirmed > 9) %>% 
+  mutate(`log(total.pop)` = log(total.pop), 
+         `log(eingen.cen.dist)` = log(eingen.cen.dist), 
+         `log(precTotal)` = log(precTotal)) %>%
+  select(dia10, `log(total.pop)`, perc.rural,
+              `log(eingen.cen.dist)`, school.year,
+              perc.with.wages, dist.min.int, profissionais.saude,
+              `log(precTotal)`, tmean) %>% 
+  gather("Variavel", "Valor", -dia10) %>% 
+ # plot
+  ggplot(aes(y = dia10,
+           x = Valor)) +
+     scale_y_log10() +
+  geom_point() +
+  ylab("Dias até o primeiro caso") +
+  xlab("") +
+  facet_wrap(Variavel ~ ., scales = "free_x")
+
+ggplotly(g)
+```
+
+
+Repetindo a seleção de modelos:
+
+```{r mod_sel_caso10}
+munis_dia10.2 <- filter(munis_dia10, !is.na(nat.airport) & !is.na(perc.rural) &
+    !is.na(eingen.cen.dist) &
+    !is.na(perc.with.wages) & !is.na(dist.min.int) & !is.na(profissionais.saude) &
+    !is.na(precTotal) & !is.na(tmean) & !is.na(dorm_3_rel) & !is.na(filcas59))
+
+
+reg_dia10 <- glm(
+  dia10 ~
+    nat.airport + perc.rural +
+    log(eingen.cen.dist) + 
+    perc.with.wages + dist.min.int + profissionais.saude +
+    log(precTotal) + tmean + dorm_3_rel +filcas59,
+  data = munis_dia10.2, family=Gamma, na.action=na.fail
+  )
+
+
+reg_dia10_step <- step(reg_dia10, dir="backward")
+reg_dia10_dredge <- dredge(reg_dia10)
+reg_dia10_importance <- importance(reg_dia10_dredge)
+
+reg_dia10_importance
+summary(reg_dia10_step)
+
+```
+
+Em relação tempo para o primeiro caso, aparentemente o que mais importa é a presença de aeroporto nacional, a porcentagem de população rural, distância até centro urbano, e temperatura; em menor grau, dorm_3_rel, filcas59 e precipitação. Para interpretar os coeficientes, normalmente é preciso lembrar que o GLM com distribuição Gamma usa uma transformação inversa. Assim, o número de dias até o décimo caso foi maior em municípios com maior população rural e menor em municípios com aeroporto, mais próximos de centros, com maior filcas59, maior precipitação e maior temperatura.
+
