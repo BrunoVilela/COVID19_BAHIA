@@ -1,0 +1,435 @@
+---
+title: "Análise exploratória dos casos de COVID-19 na Bahia"
+author: "Grupo de Estudos em Ecologia Espacial - UFBA"
+date: "06/30/2020"
+runtime: shiny
+output:
+  html_document:
+    toc: true
+    theme: journal
+    df_print: paged
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+# Autores
+#### Essa pesquisa foi realizado pelo grupo de estudos em ecologia espacial da UFBA, incluindo os seguintes pesquisadores: 
+
+- Dr. Anderson Medina (Pós-doc IBIO-UFBA) 
+- Dr. Bruno Vilela (Professor IBIO-UFBA)
+- Daniel Gonçalves (Mestrando IBIO-UFBA)
+- Dr. Gilson Carvalho (Professor ICS-UFBA)
+- Dr. Ricardo Dobrovolski (Professor IBIO-UFBA)
+- Dr. Pavel Dodonov (Professor IBIO-UFBA)
+
+# Apresentação
+#### Aqui nós trazemos um resumo dos casos de COVID-19 no estado da Bahia usando uma análise exploratória. Como pessoas interessadas na temática podem não estar familiarizadas com a linguagem de programação R, decidimos omitir os comandos que podem ser baixados [aqui](https://github.com/BrunoVilela/COVID19_BAHIA/blob/master/exploratoria.Rmd) ou ao clicar na aba *mostre o código*.
+
+#### A versão do R utilizada foi:
+<details><summary>Mostre o código</summary>
+<p>
+```{r}
+R.version
+```
+
+#### Se for seguir o código para recriar as análises, antes de inciar, carregue e instale os seguintes pacotes.
+<details><summary>Mostre o código</summary>
+<p>
+```{r pacotes, message=FALSE}
+library(coronabr) # pode baixar aqui: https://github.com/liibre/coronabr
+library(tidyverse)
+library(rgdal) # load map
+library(sp) # plot maps
+library(plotly)
+library(shiny)
+library(leaflet)
+library(RColorBrewer)
+library(knitr)
+#nossas funções podem ser baixadas aqui: https://github.com/BrunoVilela/COVID19_BAHIA/funcoes
+source("funcoes/back.clean.R")
+source("funcoes/covid.clean.R") # corrige incosistências na série temporal
+source("funcoes/covid.backup.R") # atualiza os dados usando o coronabr e adiciona um dia sem informação (20-06-08) 
+```
+
+
+# Download dos dados de COVID-19 para a Bahia
+#### Graças à iniciativa do pessoal do [liibre](https://github.com/liibre/coronabr) de disponibilizar as informações dos casos de COVID-19 para o Brasil inteiro, podemos usar o código abaixo para obter os dados dos municipios Bahia.
+#### Para saber mais sobre as fontes do dados acesse o seguinte link: https://github.com/liibre/coronabr
+<details><summary>Mostre o código</summary>
+<p>
+```{r baixar os dados}
+#covid0 <- as_tibble(get_corona_br(uf = "BA")) #Você pode usar a baixar direto do coronabr
+covid0 <- covid.backup(x=2) #essa função atualiza nosso backup dos dados e inclui um dia que está faltando no coronabr (08/jun/20)
+```
+
+Alguns municípios registram casos de COVID-19 que depois são corrigidos. Por exemplo, Catu registrou o primeiro caso em 31/03, porém essa informação foi retificada e o primeiro caso na verdade foi registrado em 06/04. Esses dados permanencem na série temporal e são corrigidos com a função abaixo.
+```{r limpeza, warning=F, message=F}
+covid0 <- covid.clean(covid0)
+covid0 <- as_tibble(covid0)
+write.csv2(covid0, "funcoes/backup/ba.clean.csv", fileEncoding="UTF-8") #salva no backup uma versão "corrigida"
+```
+
+Pequenos ajustes na tabela:
+```{r ajustes}
+covid <- covid0 %>%
+  filter(place_type == "city") %>%
+  filter(city != "Importados/Indefinidos") %>%
+  mutate(city = factor(city, levels = unique(city)))
+```
+
+Dados por municipio:
+```{r}
+mun_covid <- covid %>%
+  filter(date == date[1]) %>%
+  mutate(afetados = ifelse(confirmed > 0, 1, 0))
+```
+</p>
+</details>
+
+
+# Panorama geral da Bahia
+
+<details><summary>Mostre o código</summary>
+<p>
+```{r estatisticas, results="hide"}
+stats <- mun_covid %>%
+  summarise(
+    "Casos totais" = sum(confirmed),
+    "Mortes totais" = sum(deaths),
+    "Número de municipios afetados" = sum(confirmed > 0)
+  )
+kable(stats)
+```
+</p>
+</details>
+
+#### Estatísticas dos casos na Bahia:
+```{r, echo=FALSE}
+kable(stats)
+```
+
+
+#### Casos por município:
+<details><summary>Mostre o código</summary>
+<p>
+```{r,  results="hide"}
+g1 <- mun_covid %>% 
+  filter(confirmed > 0) %>%
+  mutate(city = as.character(city),
+    city = fct_reorder(city, -confirmed)) %>% 
+  top_n(30, confirmed) %>% 
+  ggplot(aes(x = city, y = confirmed)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_y_log10() +
+  xlab("") +
+  ylab("Casos confirmados de COVID-19") +
+  ggtitle("")
+ggplotly(g1)
+```
+</p>
+</details>
+
+### As 30 cidades mais afetadas na Bahia em número total
+```{r, echo=FALSE}
+ggplotly(g1)
+```
+
+<details><summary>Mostre o código</summary>
+<p>
+```{r,  results="hide"}
+g2 <- mun_covid %>% 
+  filter(confirmed > 0) %>%
+  mutate(city = as.character(city),
+    city = fct_reorder(city, -confirmed_per_100k_inhabitants)) %>% 
+  top_n(30, confirmed_per_100k_inhabitants) %>% 
+  ggplot(aes(x = city, y = confirmed_per_100k_inhabitants)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  xlab("") +
+  ylab("Casos de COVID-19 por 100k hab") +
+  ggtitle("")
+ggplotly(g2)
+```
+</p>
+</details>
+
+### As 30 cidades mais afetadas na Bahia em casos por 100k hab
+```{r, echo=FALSE}
+ggplotly(g2)
+```
+
+### Mapa de casos na Bahia
+<details><summary>Mostre o código</summary>
+<p>
+```{r, message = FALSE, warning=FALSE}
+ba_map <- readOGR("Data/bahia.shp")
+names(ba_map)[2] <- "ibge"
+ba_map@data[, 2] <- as.numeric(as.character(ba_map@data[, 2]))
+ba_map@data <- left_join(ba_map@data, mun_covid,
+                         by = c("ibge" = "city_ibge_code"))
+ba_map@data$death_rate<-round(ba_map@data$death_rate*100, 2)
+```
+
+```{r}
+# Prepare the text for tooltips:
+mytext <- paste(
+    "Município: ", ba_map@data$NM_MUNICIP,"<br/>", 
+    "Casos confirmados: ", ba_map@data$confirmed, "<br/>", 
+    "Casos por 100k habitantes: ", round(ba_map@data$confirmed_per_100k_inhabitants, 2), "<br/>", 
+    "Mortes: ", ba_map@data$deaths, "<br/>",
+    "Taxa de mortalidade (%): ", ba_map@data$death_rate,
+    sep="") %>%
+  lapply(htmltools::HTML)
+```
+
+
+</p>
+</details>
+
+##### Clique na aba para mudar a informação mostrada no mapa.
+
+```{r, echo = F}
+infos <- c("Casos confirmados", "Casos por 100k habitantes",
+           "Mortes", "Taxa de mortalidade")
+ selectInput("region3", "Informação:",
+                choices = infos,
+                selected = "Casos confirmados")
+  leafletOutput("phonePlot3")
+```
+
+```{r , context="server", echo=F, warning=FALSE}
+output$phonePlot3 = renderLeaflet({
+  t1 <- input$region3
+  round_value <- 0
+  if (t1 == "Casos confirmados") {
+    y <- ba_map@data$confirmed
+  }
+  if (t1 == "Casos por 100k habitantes") {
+    y <- ba_map@data$confirmed_per_100k_inhabitants
+  }
+  if (t1 == "Mortes") {
+    y <- ba_map@data$deaths
+  }
+  if (t1 == "Taxa de mortalidade") {
+    y <- ba_map@data$death_rate
+    round_value <- 3
+  }
+  
+  mybins <- NULL
+  
+  x1 = 1
+  while(length(mybins) < 10 & x1 > 0.0001) {
+    mybins <- unique(round(quantile(y, probs = seq(0, 1, x1), na.rm = T),
+                           round_value))
+    x1 <- x1 - .1
+  }
+  if (length(mybins) < 5) {
+    mybins <- as.numeric(names(table(y)))
+  }
+  mypalette <-
+    colorBin(
+      palette = "YlOrRd",
+      domain = y,
+      na.color = "gray",
+      bins = mybins
+    )
+  
+  # Final Map
+  leaflet(ba_map) %>%
+    addTiles()  %>%
+    # setView( lat=-46, lng=-11 , zoom=3) %>%
+    addPolygons(
+      fillColor = ~ mypalette(y),
+      stroke = TRUE,
+      fillOpacity = 0.9,
+      color = "black",
+      weight = 0.3,
+      label = mytext,
+      labelOptions = labelOptions(
+        style = list("font-weight" = "normal", padding = "3px 8px"),
+        textsize = "13px",
+        direction = "auto"
+      )
+    ) %>%
+    addLegend(
+      pal = mypalette,
+      values =  ~ y,
+      opacity = 0.9,
+      title = t1,
+      position = "bottomleft"
+    )
+})
+```
+
+# Taxa ao longo do tempo
+
+### Painel Bahia
+#### Número de casos, casos por 100 mil habitantes, mortes e taxa de mortalidade no tempo para o estado da Bahia.
+<details><summary>Mostre o código</summary>
+<p>
+```{r, results="hide"}
+covid_ba <- covid0 %>%
+  filter(place_type == "state")
+covid_ba2 <- covid_ba %>% 
+        select(confirmed,
+               date,
+               confirmed_per_100k_inhabitants,
+               deaths,
+               death_rate) %>%
+        gather("key", "value",-date) %>%
+        mutate(key = factor(key, levels = unique(key), 
+                            labels = infos))
+
+g3 <- ggplot(covid_ba2, aes(y = value, x = as.Date(date))) +
+  geom_point() +
+  geom_line() +
+  ylab("") +
+  xlab("Data") +
+  ggtitle("") +
+  facet_wrap(key ~ ., scales = "free_y")
+ggplotly(g3)
+```
+</details>
+</p>
+```{r, echo=F}
+ggplotly(g3)
+```
+
+### Taxa de crescimento para Bahia
+#### Aqui verificamos como a taxa de crescimento do vírus tem variado ao longo do tempo na Bahia.
+<details><summary>Mostre o código</summary>
+<p>
+```{r, results="hide"}
+rs <- covid_ba$confirmed[(nrow(covid_ba) - 1):1] / covid_ba$confirmed[nrow(covid_ba):2] 
+
+taxa <- tibble(data = rev(covid_ba$date[-nrow(covid_ba)]), rs)
+g4 <- ggplot(taxa, aes(y = rs, x = as.Date(data))) +
+  geom_point() +
+  geom_smooth(method = 'loess', formula= y ~ x) +
+  geom_line() +
+  #ylim(0, max(taxa$rs)) +
+  scale_y_log10() +
+  ylab("Taxa de crescimento dos casos de COVID-19") +
+  xlab("Data") +
+  ggtitle("")
+ggplotly(g4)
+```
+</details>
+</p>
+
+```{r, echo=FALSE}
+ggplotly(g4)
+```
+
+
+### Painel Municípios
+#### Verifique o número de casos, casos por 100 mil habitantes, mortes e taxa de mortalidade no tempo para cada município:
+
+```{r, echo = FALSE}
+ selectInput("region", "Cidade:",
+                choices = unique(mun_covid$city),
+                selected = "Salvador")
+  plotOutput("phonePlot")
+```
+
+
+```{r , context="server", echo=FALSE}
+   output$phonePlot = renderPlot({
+      a <- input$region
+      
+      covid0 %>%
+        filter(city == a) %>%
+        select(confirmed,
+               date,
+               confirmed_per_100k_inhabitants,
+               deaths,
+               death_rate) %>%
+        gather("key", "value",-date) %>%
+        mutate(key = factor(key, levels = unique(key), 
+                            labels = infos)) %>% 
+        ggplot(aes(y = value, x = as.Date(date))) +
+        geom_point() +
+        geom_line() +
+        ylab("") +
+        xlab("Data") +
+        ggtitle(a) +
+        facet_wrap(key ~ ., scales = "free_y")
+      
+    })
+```
+
+
+### Taxa de crescimento para Municípios
+#### Verifique a variação da taxa de crescimento ao longo do tempo para cada município:
+```{r, echo = F}
+ selectInput("region2", "Cidade:",
+                choices = unique(mun_covid$city),
+                selected = "Salvador")
+  plotOutput("phonePlot2")
+```
+
+```{r, echo = F, context="server"}
+   output$phonePlot2 = renderPlot({
+covid_sa <- covid0 %>%
+  filter(city == input$region2) 
+rs <- covid_sa$confirmed[(nrow(covid_sa) - 1):1] / covid_sa$confirmed[nrow(covid_sa):2] 
+
+taxa <- tibble(data = rev(covid_sa$date[-nrow(covid_sa)]), rs)
+ggplot(taxa, aes(y = rs, x = as.Date(data))) +
+  geom_smooth() +
+  geom_point() +
+  geom_line() +
+  scale_y_log10() +
+  ylab("Taxa de crescimento dos casos de COVID-19") +
+  xlab("Data")  +
+  ggtitle(input$region2)
+    })
+```
+
+
+### Municípios com maiores mudanças no número de casos
+#### Mudança no crescimento do número de casos dos municípios baianos na última semana. Nos casos em que o municípios´desacelerou no crescimento de casos temos valores negativos (cor azul) enquanto que municípios com valores positivos são aqueles em ocorreram um aumento no número de casos (cor vermelha). A figura foi restrita a municípios que possuíam pelo menos 20 casos de COVID-19 registrados na última semana. 
+<details><summary>Mostre o código</summary>
+<p>
+```{r, results="hide"}
+cidades <- as.character(mun_covid$city[mun_covid$confirmed > 20])
+n <- length(cidades)
+rs_mun <- numeric(n)
+i<-2
+for (i in 1:n) {
+  mun_i <- covid %>%
+    filter(city == cidades[i], confirmed > 10)
+  if (nrow(mun_i) > 7) {
+    int1<-(nrow(mun_i) - 1):1
+    int2<-nrow(mun_i):2
+    rs <- mun_i$confirmed[int2[1:7]] / mun_i$confirmed[int1[1:7]]
+    rs <- rs[!is.na(rs) & !is.infinite(rs)]
+    if (!all(rs == 1)) {
+      x <- 1:length(rs)
+      rs_mun[i] <- lm(rs ~ x)$coefficients[2]
+    }
+  }
+}
+taxa_mun <- tibble(cidades, taxa = rs_mun)
+taxa_mun <- taxa_mun[rs_mun != 0, ]
+taxa_mun <- taxa_mun %>%
+  top_n(30, abs(taxa)) 
+
+g5 <- taxa_mun %>% mutate(cidades = fct_reorder(cidades, taxa)) %>% 
+  na.omit() %>% 
+ggplot(aes(x = cidades, y = taxa, fill = taxa)) +
+  geom_col() +
+  theme(axis.text.x =  element_text(angle = 90),
+        legend.position = "none") +
+  scale_fill_gradient2(low = "blue", mid = "gray", high = "red") +
+  xlab("") +
+  ylab("Variação da taxa")
+ggplotly(g5)
+```
+</details>
+</p>
+```{r, echo=FALSE}
+ggplotly(g5)
+```
