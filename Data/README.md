@@ -1,3 +1,4 @@
+Informações sobre os arquivos e suas variáveis.
 |Arquivo|Variável|Descrição|Fonte|
 |---|---|---|---|
 |bahia.dbf|mapa bahia|shapefile com alta qualidade|IBGE|
