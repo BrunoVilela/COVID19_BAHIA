@@ -78,11 +78,28 @@ covid <- covid0 %>%
   mutate(city = factor(city, levels = unique(city)))
 ```
 
+Carregando e adicionando regioes na tabela:
+```{r}
+meso_dat<-read.csv("Data/meso.csv")
+x_meso<-match(covid$city_ibge_code, meso_dat$code)
+covid$region<-meso_dat[x_meso,1]
+```
+
 Dados por municipio:
 ```{r}
 mun_covid <- covid %>%
   filter(date == date[1]) %>%
   mutate(afetados = ifelse(confirmed > 0, 1, 0))
+```
+
+Dados por regiões:
+```{r}
+reg_covid<-aggregate(mun_covid[,c(5,6,8)], list(mun_covid$region), sum)
+reg_covid$confirmed_per_100k_inhabitants<-reg_covid[,2]/reg_covid[,4]*100000
+reg_covid$death_rate<-reg_covid[,3]/reg_covid[,2]
+reg_covid$afetados<-aggregate(mun_covid[,5], list(mun_covid$region), length)[,2]
+reg_covid$total<-table(meso_dat[,1])
+colnames(reg_covid)[1]<-"region"
 ```
 </p>
 </details>
@@ -97,16 +114,28 @@ stats <- mun_covid %>%
   summarise(
     "Casos totais" = sum(confirmed),
     "Mortes totais" = sum(deaths),
-    "Número de municipios afetados" = sum(confirmed > 0)
+    "Número de municipios afetados" = sum(confirmed > 0),
+    "% de municipios afetados" = sum(confirmed > 0) / 4.17
   )
-kable(stats)
+
+reg_stats <- tibble(
+  "Casos totais" = reg_covid$confirmed,
+  "Mortes totais" = reg_covid$deaths,
+  "Número de municipios afetados" = reg_covid$afetados,
+  "% de municipios afetados" = reg_covid$afetados / reg_covid$total *
+    100
+)
+rot<-c("Bahia", paste(reg_covid$region))
+overall<-tibble("Região"=rot, rbind(stats, reg_stats))
+ 
+kable(overall, digits=1)
 ```
 </p>
 </details>
 
 #### Estatísticas dos casos na Bahia:
 ```{r, echo=FALSE}
-kable(stats)
+kable(overall, digits=1)
 ```
 
 
@@ -125,7 +154,8 @@ g1 <- mun_covid %>%
   scale_y_log10() +
   xlab("") +
   ylab("Casos confirmados de COVID-19") +
-  ggtitle("")
+  ggtitle("") +
+  theme(panel.grid = element_blank())
 ggplotly(g1)
 ```
 </p>
@@ -150,8 +180,9 @@ g2 <- mun_covid %>%
   theme(axis.text.x = element_text(angle = 90)) +
   xlab("") +
   ylab("Casos de COVID-19 por 100k hab") +
-  ggtitle("")
-g2
+  ggtitle("") +
+  theme(panel.grid = element_blank())
+ggplotly(g2)
 ```
 </p>
 </details>
@@ -165,13 +196,20 @@ ggplotly(g2)
 <details><summary>Mostre o código</summary>
 <p>
 ```{r, message = FALSE, warning=FALSE}
-#ba_map <- readOGR("Data/bahia.shp") #ibge BA shapefile
-ba_map <- readOGR("Data/sim_bahia.shp") #simplified shapefile
+#ba_map <- readOGR("Data/bahia.shp") #ibge BA shapefile (slower)
+ba_map <- readOGR("Data/sim_bahia.shp") #simplified shapefile (faster)
 names(ba_map)[2] <- "ibge"
 ba_map@data[, 2] <- as.numeric(as.character(ba_map@data[, 2]))
 ba_map@data <- left_join(ba_map@data, mun_covid,
                          by = c("ibge" = "city_ibge_code"))
 ba_map@data$death_rate<-round(ba_map@data$death_rate*100, 2)
+
+meso_map <- readOGR("Data/sim_meso.shp") #simplified shapefile (faster)
+meso_map@data <- left_join(meso_map@data, reg_covid,
+                           by = c("region" = "region"))
+meso_map@data$death_rate <- round(meso_map@data$death_rate * 100, 2)
+meso_map@data$NM_MUNICIP<-meso_map@data$region
+
 ```
 
 ```{r}
@@ -198,26 +236,49 @@ infos <- c("Casos confirmados", "Casos por 100k habitantes",
  selectInput("region3", "Informação:",
                 choices = infos,
                 selected = "Casos confirmados")
+ selectInput("meso3", "Nível:",
+                choices = c("Cidade", "Mesoregião"),
+                selected = "Cidade")
   leafletOutput("phonePlot3")
+  
 ```
 
 ```{r , context="server", echo=F, warning=FALSE}
 output$phonePlot3 = renderLeaflet({
+  if (input$meso3=="Cidade")
+  {
+    sel_shp<-ba_map
+  } else {
+    sel_shp<-meso_map
+  }
+  
   t1 <- input$region3
   round_value <- 0
   if (t1 == "Casos confirmados") {
-    y <- ba_map@data$confirmed
+    y <- sel_shp@data$confirmed
   }
   if (t1 == "Casos por 100k habitantes") {
-    y <- ba_map@data$confirmed_per_100k_inhabitants
+    y <- sel_shp@data$confirmed_per_100k_inhabitants
   }
   if (t1 == "Mortes") {
-    y <- ba_map@data$deaths
+    y <- sel_shp@data$deaths
   }
   if (t1 == "Taxa de mortalidade") {
-    y <- ba_map@data$death_rate
+    y <- sel_shp@data$death_rate
     round_value <- 3
   }
+  
+  # Prepare the text for tooltips:
+mytext <- paste(
+    "Nome: ", sel_shp@data$NM_MUNICIP,"<br/>", 
+    "Casos confirmados: ", sel_shp@data$confirmed, "<br/>", 
+    "Casos por 100k habitantes: ", round(sel_shp@data$confirmed_per_100k_inhabitants, 2), "<br/>", 
+    "Mortes: ", sel_shp@data$deaths, "<br/>",
+    "Taxa de mortalidade (%): ", sel_shp@data$death_rate,
+    sep="") %>%
+  lapply(htmltools::HTML)
+  
+  
   
   mybins <- NULL
   
@@ -239,7 +300,7 @@ output$phonePlot3 = renderLeaflet({
     )
   
   # Final Map
-  leaflet(ba_map) %>%
+  leaflet(sel_shp) %>%
     addTiles()  %>%
     #setView( lat=-46, lng=-11 , zoom=3) %>%
     addPolygons(
@@ -290,7 +351,8 @@ g3 <- ggplot(covid_ba2, aes(y = value, x = as.Date(date))) +
   ylab("") +
   xlab("Data") +
   ggtitle("") +
-  facet_wrap(key ~ ., scales = "free_y")
+  facet_wrap(key ~ ., scales = "free_y") +
+  theme(panel.grid = element_blank())
 ggplotly(g3)
 ```
 </details>
@@ -315,7 +377,8 @@ g4 <- ggplot(taxa, aes(y = rs, x = as.Date(data))) +
   scale_y_log10() +
   ylab("Taxa de crescimento dos casos de COVID-19") +
   xlab("Data") +
-  ggtitle("")
+  ggtitle("") +
+  theme(panel.grid = element_blank())
 ggplotly(g4)
 ```
 </details>
@@ -323,6 +386,89 @@ ggplotly(g4)
 
 ```{r, echo=FALSE}
 ggplotly(g4)
+```
+
+### Painel Regiões
+#### Verifique o número de casos, casos por 100 mil habitantes, mortes e taxa de mortalidade no tempo para cada município:
+
+```{r, echo = FALSE}
+ selectInput("meso", "Região:",
+                choices = unique(mun_covid$region),
+                selected = "Sul Baiano")
+  plotOutput("phonePlot9")
+```
+
+
+
+```{r , context="server", echo=FALSE}
+   output$phonePlot9 = renderPlot({
+      a <- input$meso
+      reg_pop<-reg_covid %>%
+        filter(region == a) %>%
+        select(estimated_population_2019)
+      
+      
+      covid %>%
+        filter(region == a) %>%
+        group_by(date) %>%
+        summarise(
+          confirmed = sum(confirmed),
+          deaths = sum (deaths),
+          confirmed_per_100k_inhabitants = as.numeric(sum(confirmed) / reg_pop),
+          death_rate = sum (deaths) / sum(confirmed),
+          .groups = "keep") %>%
+        select(confirmed,
+               date,
+               confirmed_per_100k_inhabitants,
+               deaths,
+               death_rate) %>%
+        gather("key", "value",-date) %>%
+        mutate(key = factor(key, levels = unique(key), 
+                            labels = infos)) %>% 
+        ggplot(aes(y = value, x = as.Date(date))) +
+        geom_point() +
+        geom_line() +
+        ylab("") +
+        xlab("Data") +
+        ggtitle(a) +
+        facet_wrap(key ~ ., scales = "free_y")
+  
+    })
+```
+
+
+### Taxa de crescimento para Regiões
+#### Verifique a variação da taxa de crescimento ao longo do tempo para cada região:
+```{r, echo = F}
+ selectInput("meso2", "Região:",
+                choices = unique(mun_covid$region),
+                selected = "Sul Baiano")
+  plotOutput("phonePlot10")
+```
+
+```{r, echo = F, context="server"}
+   output$phonePlot10 = renderPlot({
+     b<-input$meso2
+     #b<-"Sul Baiano"
+covid_re <- covid %>%
+  filter(region == b) %>%
+  group_by(date) %>%
+        summarise(
+          confirmed = sum(confirmed), .groups = "keep")
+
+rs <- covid_re$confirmed[nrow(covid_re):2] / covid_re$confirmed[(nrow(covid_re) - 1):1]
+
+taxa <- tibble(data = rev(covid_re$date[-nrow(covid_re)]), rs)
+ggplot(taxa, aes(y = rs, x = as.Date(data))) +
+  geom_smooth() +
+  geom_point() +
+  geom_line() +
+  scale_y_log10() +
+  ylab("Taxa de crescimento dos casos de COVID-19") +
+  xlab("Data")  +
+  ggtitle("") +
+  theme(panel.grid = element_blank())
+    })
 ```
 
 
@@ -341,7 +487,7 @@ ggplotly(g4)
    output$phonePlot = renderPlot({
       a <- input$region
       
-      covid0 %>%
+      covid %>%
         filter(city == a) %>%
         select(confirmed,
                date,
@@ -374,7 +520,7 @@ ggplotly(g4)
 
 ```{r, echo = F, context="server"}
    output$phonePlot2 = renderPlot({
-covid_sa <- covid0 %>%
+covid_sa <- covid %>%
   filter(city == input$region2) 
 rs <- covid_sa$confirmed[(nrow(covid_sa) - 1):1] / covid_sa$confirmed[nrow(covid_sa):2] 
 
@@ -386,13 +532,14 @@ ggplot(taxa, aes(y = rs, x = as.Date(data))) +
   scale_y_log10() +
   ylab("Taxa de crescimento dos casos de COVID-19") +
   xlab("Data")  +
-  ggtitle(input$region2)
+  ggtitle(input$region2) +
+  theme(panel.grid = element_blank())
     })
 ```
 
 
 ### Municípios com maiores mudanças no número de casos
-#### Mudança no crescimento do número de casos dos municípios baianos na última semana. Nos casos em que o municípios´desacelerou no crescimento de casos temos valores negativos (cor azul) enquanto que municípios com valores positivos são aqueles em ocorreram um aumento no número de casos (cor vermelha). A figura foi restrita a municípios que possuíam pelo menos 20 casos de COVID-19 registrados na última semana. 
+#### Mudança no crescimento do número de casos dos municípios baianos na última semana. Quando o municípios desacelerou no crescimento de casos temos valores negativos (cor azul) enquanto que municípios com valores positivos são aqueles em ocorreram um aumento no número de casos (cor vermelha). A figura foi restrita a municípios que possuíam pelo menos 20 casos de COVID-19 registrados na última semana. 
 <details><summary>Mostre o código</summary>
 <p>
 ```{r, results="hide"}
@@ -406,7 +553,7 @@ for (i in 1:n) {
   if (nrow(mun_i) > 7) {
     int1<-(nrow(mun_i) - 1):1
     int2<-nrow(mun_i):2
-    rs <- mun_i$confirmed[int2[1:7]] / mun_i$confirmed[int1[1:7]]
+    rs <- 1- (mun_i$confirmed[int1[1:7]]/mun_i$confirmed[int2[1:7]])
     rs <- rs[!is.na(rs) & !is.infinite(rs)]
     if (!all(rs == 1)) {
       x <- 1:length(rs)
@@ -427,7 +574,8 @@ ggplot(aes(x = cidades, y = taxa, fill = taxa)) +
         legend.position = "none") +
   scale_fill_gradient2(low = "blue", mid = "gray", high = "red") +
   xlab("") +
-  ylab("Variação da taxa")
+  ylab("Variação da taxa") +
+  theme(panel.grid = element_blank())
 ggplotly(g5)
 ```
 </details>
@@ -435,3 +583,6 @@ ggplotly(g5)
 ```{r, echo=FALSE}
 ggplotly(g5)
 ```
+
+
+
